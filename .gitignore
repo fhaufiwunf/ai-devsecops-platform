@@ -1,5 +1,7 @@
 # Python
 venv/
+dashboard/data/*.db
+n8n/data/
 __pycache__/
 *.pyc
 
