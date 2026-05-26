@@ -1,0 +1,37 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>DevSecOps AI Dashboard</title>
+  <style>
+    body { font-family: Arial; margin: 40px; background: #f6f8fa; }
+    table { width: 100%; border-collapse: collapse; background: white; }
+    th, td { padding: 12px; border-bottom: 1px solid #ddd; }
+    .BLOCK { color: red; font-weight: bold; }
+    .ALLOW { color: green; font-weight: bold; }
+  </style>
+</head>
+<body>
+  <h1>DevSecOps AI Security Dashboard</h1>
+
+  <table>
+    <tr>
+      <th>ID</th>
+      <th>Time</th>
+      <th>Total Findings</th>
+      <th>Risk Score</th>
+      <th>Decision</th>
+      <th>Detail</th>
+    </tr>
+    {% for scan in scans %}
+    <tr>
+      <td>{{ scan.id }}</td>
+      <td>{{ scan.created_at }}</td>
+      <td>{{ scan.total_findings }}</td>
+      <td>{{ scan.risk_score }}</td>
+      <td class="{{ scan.pipeline_decision }}">{{ scan.pipeline_decision }}</td>
+      <td><a href="/scans/{{ scan.id }}">View</a></td>
+    </tr>
+    {% endfor %}
+  </table>
+</body>
+</html>

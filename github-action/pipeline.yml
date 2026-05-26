@@ -1,0 +1,149 @@
+name: DevSecOps Pipeline
+
+on:
+  push:
+    branches: [ "main" ]
+
+env:
+  IMAGE_NAME: devsecops-demo-app
+  APP_URL: http://127.0.0.1:8080
+  N8N_WEBHOOK_URL: https://unfitted-unsubtle-overdrive.ngrok-free.dev/webhook/security-scan
+
+jobs:
+  build-scan-ai-gate-deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      # 1) SAST - scan source code
+      - name: Run Semgrep Scan
+        run: |
+          python -m pip install --upgrade pip
+          pip install semgrep
+          semgrep scan \
+            --config p/security-audit \
+            --config p/owasp-top-ten \
+            --json \
+            --output semgrep-report.json \
+            . || true
+      # 2) Trivy FS - scan source/dependencies/secrets
+      - name: Run Trivy FS Scan
+        uses: aquasecurity/trivy-action@master
+        with:
+          scan-type: fs
+          scan-ref: .
+          scanners: vuln,secret,misconfig
+          severity: CRITICAL,HIGH,MEDIUM,LOW
+          ignore-unfixed: true
+          format: json
+          output: trivy-report.json
+          exit-code: '0'
+
+      # 3) Start demo app locally so ZAP can scan correct target
+      - name: Start Demo App
+        run: |
+          docker compose -f devsecops-demo-app/docker-compose.yml up -d --build
+          echo "Waiting for app to start..."
+          for i in {1..30}; do
+            if curl -sSf $APP_URL > /dev/null; then
+              echo "App is running at $APP_URL"
+              exit 0
+            fi
+            sleep 5
+          done
+          echo "App failed to start"
+          docker compose logs
+          exit 1
+      # 4) DAST - scan running app, not example.com
+      - name: Run ZAP Baseline Scan
+        run: |
+          mkdir -p zap-output
+          chmod 777 zap-output
+          docker run --rm --network host \
+            -v ${{ github.workspace }}/zap-output:/zap/wrk:rw \
+            ghcr.io/zaproxy/zaproxy:stable \
+            zap-baseline.py \
+            -t http://172.17.0.1:8080 \
+            -J zap-report.json \
+            -I || true
+          cp zap-output/zap-report.json zap-report.json || echo '{}' > zap-report.json
+      - name: Upload Security Reports
+        uses: actions/upload-artifact@v4
+        with:
+          name: security-reports
+          path: |
+            semgrep-report.json
+            trivy-report.json
+            zap-report.json
+      # 5) Send all reports to n8n AI Agent and receive security gate decision
+      - name: Send Reports to n8n AI Agent
+        id: security_gate
+        run: |
+          jq -n \
+            --slurpfile trivy trivy-report.json \
+            --slurpfile semgrep semgrep-report.json \
+            --slurpfile zap zap-report.json \
+            --arg repo "${{ github.repository }}" \
+            --arg branch "${{ github.ref_name }}" \
+            --arg commit "${{ github.sha }}" \
+            '{
+              metadata: {
+                repo: $repo,
+                branch: $branch,
+                commit: $commit
+              },
+              trivy: $trivy[0],
+              semgrep: $semgrep[0],
+              zap: $zap[0]
+            }' > final-report.json
+          response=$(curl -sS -X POST "$N8N_WEBHOOK_URL" \
+            -H "Content-Type: application/json" \
+            -d @final-report.json)
+          echo "$response" > n8n-response.json
+          cat n8n-response.json
+          decision=$(echo "$response" | jq -r '.decision // .pipeline_decision // .summary.pipeline_decision // .status // "allow"' | tr '[:upper:]' '[:lower:]')
+          risk_score=$(echo "$response" | jq -r '.risk_score // .summary.risk_score // .ai_result.risk_score // 0')
+          echo "decision=$decision" >> $GITHUB_OUTPUT
+          echo "risk_score=$risk_score" >> $GITHUB_OUTPUT
+      - name: Check Security Gate
+        run: |
+          echo "Security decision: ${{ steps.security_gate.outputs.decision }}"
+          echo "Risk score: ${{ steps.security_gate.outputs.risk_score }}"
+          if echo "${{ steps.security_gate.outputs.decision }}" | grep -qi "block"; then
+            echo "Security gate failed. Deployment stopped."
+            exit 1
+          fi
+      # 6) Build and push image only if security gate passes
+#      - name: Build Docker Image
+#        run: |
+#          docker build -t ${{ secrets.DOCKERHUB_USERNAME }}/devsecops-demo-app:${{ github.sha }} ./devsecops-demo-app
+#          docker tag ${{ secrets.DOCKERHUB_USERNAME }}/devsecops-demo-app:${{ github.sha }} ${{ secrets.DOCKERHUB_USERNAME }}/devsecops-demo-app:latest
+
+#      - name: Login to Docker Hub
+#        uses: docker/login-action@v3
+#        with:
+#          username: ${{ secrets.DOCKERHUB_USERNAME }}
+#          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+#      - name: Push Docker Image
+#        run: |
+#          docker push ${{ secrets.DOCKERHUB_USERNAME }}/devsecops-demo-app:${{ github.sha }}
+#          docker push ${{ secrets.DOCKERHUB_USERNAME }}/devsecops-demo-app:latest
+
+      # 7) Deploy to Kubernetes
+      # This works only if this runner has kubectl access to your cluster,
+      # or if you add KUBE_CONFIG secret for a cloud/remote cluster.
+#      - name: Setup kubeconfig
+#        if: ${{ secrets.KUBE_CONFIG != '' }}
+#        run: |
+#          mkdir -p ~/.kube
+#          echo "${{ secrets.KUBE_CONFIG }}" | base64 -d > ~/.kube/config
+
+#      - name: Deploy to Kubernetes
+#        if: ${{ secrets.KUBE_CONFIG != '' }}
+#        run: |
+#          kubectl set image deployment/devsecops-demo-app \
+#            devsecops-demo-app=${{ secrets.DOCKERHUB_USERNAME }}/$IMAGE_NAME:${{ github.sha }}
+#          kubectl rollout status deployment/devsecops-demo-app

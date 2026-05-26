@@ -1,0 +1,35 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Scan Detail</title>
+  <style>
+    body { font-family: Arial; margin: 40px; background: #f6f8fa; }
+    .card { background: white; padding: 20px; margin-bottom: 20px; border-radius: 8px; }
+    .ERROR, .CRITICAL, .HIGH { color: red; font-weight: bold; }
+    .Medium, .MEDIUM { color: orange; font-weight: bold; }
+    .Low, .LOW { color: green; }
+  </style>
+</head>
+<body>
+  <a href="/">← Back</a>
+  <h1>Scan #{{ scan.id }}</h1>
+
+  <div class="card">
+    <p><b>Decision:</b> {{ scan.pipeline_decision }}</p>
+    <p><b>Total Findings:</b> {{ scan.total_findings }}</p>
+    <p><b>AI Summary:</b> {{ scan.ai_summary }}</p>
+    <p><b>AI Fix:</b> {{ scan.ai_fix_suggestion }}</p>
+  </div>
+
+  {% for f in findings %}
+  <div class="card">
+    <p><b>Tool:</b> {{ f.tool }}</p>
+    <p><b>Severity:</b> <span class="{{ f.severity }}">{{ f.severity }}</span></p>
+    <p><b>Title:</b> {{ f.title }}</p>
+    <p><b>File/URL:</b> {{ f.file_or_url }}</p>
+    <p><b>Line:</b> {{ f.line }}</p>
+    <p><b>Fix:</b> {{ f.suggested_fix }}</p>
+  </div>
+  {% endfor %}
+</body>
+</html>
