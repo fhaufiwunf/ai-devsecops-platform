@@ -26,3 +26,10 @@ node_modules/
 # OS
 .DS_Store
 Thumbs.db
+
+dashboard/data/*.db
+n8n/data/*
+!n8n/data/.gitkeep
+
+dashboard/__pycache__/
+dashboard/*.pyc

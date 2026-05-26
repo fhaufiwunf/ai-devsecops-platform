@@ -1,3 +1,4 @@
+version: "3.9"
 services:
   dashboard:
     build: ./dashboard
@@ -6,6 +7,7 @@ services:
       - "${DASHBOARD_PORT:-8000}:8000"
     volumes:
       - ./dashboard/data:/app/data
+      - ./dashboard/templates:/app/templates
     env_file:
       - .env
     restart: unless-stopped
