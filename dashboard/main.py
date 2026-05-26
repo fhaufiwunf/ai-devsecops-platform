@@ -8,7 +8,10 @@ import json
 
 app = FastAPI(title="DevSecOps AI Dashboard")
 
-engine = create_engine("sqlite:///./data/devsecops_scans.db"), connect_args={"check_same_thread": False})
+engine = create_engine(
+    "sqlite:///./data/devsecops_scans.db",
+    connect_args={"check_same_thread": False}
+)
 SessionLocal = sessionmaker(bind=engine)
 Base = declarative_base()
 templates = Jinja2Templates(directory="templates")
