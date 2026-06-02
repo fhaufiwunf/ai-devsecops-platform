@@ -1,0 +1,163 @@
+{
+  "name": "My workflow 2",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "ai-chat",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [
+        0,
+        0
+      ],
+      "id": "a952bd76-7cfb-4693-bb1d-1b4099686c5c",
+      "name": "Webhook",
+      "webhookId": "df9f1075-b68c-473b-94c8-a11fde3ac86d"
+    },
+    {
+      "parameters": {
+        "jsCode": "const body = $json.body || $json;\n\nreturn [{\n  json: {\n    finding_id: body.finding_id,\n    question: body.question || \"How do I fix this vulnerability?\",\n    finding: body.finding || {},\n    source_context: body.source_context || \"\"\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        208,
+        0
+      ],
+      "id": "1db1e02d-6015-4251-b563-13806b2c747a",
+      "name": "Validate Input"
+    },
+    {
+      "parameters": {
+        "jsCode": "const f = $json.finding || {};\n\nconst prompt = `\nYou are an AI DevSecOps remediation assistant.\n\nVulnerability:\n- Finding ID: ${$json.finding_id}\n- Tool: ${f.tool || \"\"}\n- Severity: ${f.severity || \"\"}\n- Type: ${f.type || \"\"}\n- Title: ${f.title || \"\"}\n- File or URL: ${f.file_or_url || \"\"}\n- Line: ${f.line || \"\"}\n- Suggested fix from scanner: ${f.suggested_fix || \"\"}\n\nSource code context:\n${$json.source_context || \"No source code context provided.\"}\n\nDeveloper question:\n${$json.question}\n\nPlease answer with:\n1. Root cause\n2. Security impact\n3. Step-by-step fix\n4. Secure code example if possible\n5. How to verify the fix\n`;\n\nreturn [{\n  json: {\n    ...$json,\n    ai_prompt: prompt\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        416,
+        0
+      ],
+      "id": "032dcec7-8d8e-4123-a193-59c63ba11011",
+      "name": "Build AI Chat Prompt"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://192.168.0.101:11434/api/generate",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{\n  {\n    model: \"qwen2.5:3b\",\n    prompt: $json.ai_prompt,\n    stream: false,\n    options: {\n      temperature: 0.2,\n      num_predict: 700\n    }\n  }\n}}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        624,
+        0
+      ],
+      "id": "f63b3bfc-9cd3-41ff-b4e5-cef9f0067760",
+      "name": "HTTP Request"
+    },
+    {
+      "parameters": {
+        "jsCode": "const previous = $('Build AI Chat Prompt').first().json;\n\nconst answer =\n  $json.body?.response ||\n  $json.response ||\n  \"\";\n\nreturn [{\n  json: {\n    finding_id: previous.finding_id,\n    question: previous.question,\n    answer,\n    created_at: new Date().toISOString()\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        816,
+        0
+      ],
+      "id": "ab9a6d8f-491f-4c3a-bdb3-b43f5d323003",
+      "name": "Parse AI Response"
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ $json }}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.5,
+      "position": [
+        1024,
+        0
+      ],
+      "id": "75271ccf-607f-4fdd-b406-72445cbd56aa",
+      "name": "Respond to Webhook"
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Validate Input",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate Input": {
+      "main": [
+        [
+          {
+            "node": "Build AI Chat Prompt",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build AI Chat Prompt": {
+      "main": [
+        [
+          {
+            "node": "HTTP Request",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTTP Request": {
+      "main": [
+        [
+          {
+            "node": "Parse AI Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse AI Response": {
+      "main": [
+        [
+          {
+            "node": "Respond to Webhook",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate"
+  },
+  "versionId": "bfa0e3ff-1e76-4ce5-b435-64c8e16324ca",
+  "meta": {
+    "instanceId": "3e234e7f4a32fdcb62d5da41244aaa6356684c932eb110e6af33bf7c9d7f8bb1"
+  },
+  "id": "4sv9xvQ6fzL4hovU",
+  "tags": []
+}

@@ -8,6 +8,7 @@ services:
     volumes:
       - ./dashboard/data:/app/data
       - ./dashboard/templates:/app/templates
+      - ${SOURCE_CODE_PATH:-./sample-source}:/workspace/source:ro
     env_file:
       - .env
     restart: unless-stopped

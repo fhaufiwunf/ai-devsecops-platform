@@ -1,4 +1,6 @@
-from fastapi import FastAPI, Request
+import os
+import requests
+from fastapi import FastAPI, Request, Form
 from fastapi.responses import HTMLResponse
 from fastapi.templating import Jinja2Templates
 from sqlalchemy import create_engine, Column, Integer, String, Float, Boolean, Text, DateTime, ForeignKey
@@ -6,16 +8,15 @@ from sqlalchemy.orm import declarative_base, sessionmaker
 from datetime import datetime
 import json
 
+
+
 app = FastAPI(title="DevSecOps AI Dashboard")
 
-engine = create_engine(
-    "sqlite:///./data/devsecops_scans.db",
-    connect_args={"check_same_thread": False}
-)
+engine = create_engine("sqlite:///./devsecops_scans.db", connect_args={"check_same_thread": False})
 SessionLocal = sessionmaker(bind=engine)
 Base = declarative_base()
 templates = Jinja2Templates(directory="templates")
-
+SOURCE_ROOT = "/home/giang/devsecops-project"
 
 class Scan(Base):
     __tablename__ = "scans"
@@ -46,6 +47,50 @@ class Finding(Base):
     suggested_fix = Column(Text)
     raw_json = Column(Text)
 
+def get_source_context(file_path: str, line_number, radius: int = 5) -> str:
+    if not file_path:
+        return ""
+
+    try:
+        line_number = int(line_number)
+    except Exception:
+        return ""
+
+    safe_path = file_path.lstrip("/")
+
+    if safe_path.startswith("http://") or safe_path.startswith("https://"):
+        return ""
+
+    full_path = os.path.abspath(os.path.join(SOURCE_ROOT, safe_path))
+    source_root_abs = os.path.abspath(SOURCE_ROOT)
+
+    if not full_path.startswith(source_root_abs):
+        return "Blocked unsafe file path."
+
+    if not os.path.exists(full_path):
+        return f"Source file not found: {full_path}"
+
+    with open(full_path, "r", encoding="utf-8", errors="ignore") as f:
+        lines = f.readlines()
+
+    start = max(1, line_number - radius)
+    end = min(len(lines), line_number + radius)
+
+    context = []
+    for i in range(start, end + 1):
+        marker = ">>" if i == line_number else "  "
+        context.append(f"{marker} {i}: {lines[i - 1].rstrip()}")
+
+    return "\n".join(context)
+
+class ChatHistory(Base):
+    __tablename__ = "chat_history"
+
+    id = Column(Integer, primary_key=True, index=True)
+    finding_id = Column(Integer, ForeignKey("findings.id"))
+    question = Column(Text)
+    answer = Column(Text)
+    created_at = Column(DateTime, default=datetime.utcnow)
 
 Base.metadata.create_all(bind=engine)
 
@@ -125,10 +170,34 @@ def dashboard(request: Request):
     db = SessionLocal()
     scans = db.query(Scan).order_by(Scan.created_at.desc()).all()
     db.close()
+
+    critical = 0
+    high = 0
+    medium = 0
+    low = 0
+
+    for scan in scans:
+        sev = (scan.severity or "").lower()
+
+        if sev == "critical":
+            critical += 1
+        elif sev == "high":
+            high += 1
+        elif sev == "medium":
+            medium += 1
+        elif sev == "low":
+            low += 1
+
     return templates.TemplateResponse(
-    	request=request,
-    	name="index.html",
-    	context={"scans": scans}
+        request=request,
+        name="index.html",
+        context={
+            "scans": scans,
+            "critical": critical,
+            "high": high,
+            "medium": medium,
+            "low": low
+        }
     )
 
 
@@ -142,4 +211,108 @@ def scan_detail(request: Request, scan_id: int):
     	request=request,
     	name="scan_detail.html",
     	context={"scan": scan, "findings": findings}
+    )
+@app.get("/findings/{finding_id}/chat", response_class=HTMLResponse)
+def chat_page(request: Request, finding_id: int):
+    db = SessionLocal()
+    finding = db.query(Finding).filter(Finding.id == finding_id).first()
+    history = (
+        db.query(ChatHistory)
+        .filter(ChatHistory.finding_id == finding_id)
+        .order_by(ChatHistory.created_at.asc())
+        .all()
+    )
+    db.close()
+
+    source_context = get_source_context(
+        finding.file_or_url,
+        finding.line,
+        radius=5
+    )
+
+    return templates.TemplateResponse(
+        request=request,
+        name="chat.html",
+        context={
+            "finding": finding,
+            "scan_id": finding.scan_id,
+            "history": history,
+            "answer": None,
+            "source_context": source_context
+        }
+    )
+
+
+@app.post("/findings/{finding_id}/chat", response_class=HTMLResponse)
+def ask_ai(request: Request, finding_id: int, question: str = Form(...)):
+    db = SessionLocal()
+    finding = db.query(Finding).filter(Finding.id == finding_id).first()
+
+    source_context = get_source_context(
+        finding.file_or_url,
+        finding.line,
+        radius=5
+    )
+
+    payload = {
+        "finding_id": finding.id,
+        "question": question,
+        "finding": {
+            "tool": finding.tool,
+            "type": finding.type,
+            "severity": finding.severity,
+            "title": finding.title,
+            "file_or_url": finding.file_or_url,
+            "line": finding.line,
+            "suggested_fix": finding.suggested_fix
+        },
+        "source_context": source_context
+    }
+
+    try:
+        res = requests.post(
+            "http://localhost:5678/webhook/ai-chat",
+            json=payload,
+            timeout=180
+        )
+
+        data = res.json()
+
+        if isinstance(data, list) and len(data) > 0:
+            answer = data[0].get("answer", "")
+        elif isinstance(data, dict):
+            answer = data.get("answer", "")
+        else:
+            answer = str(data)
+
+    except Exception as e:
+        answer = f"Failed to call AI workflow: {e}"
+
+    chat = ChatHistory(
+        finding_id=finding.id,
+        question=question,
+        answer=answer
+    )
+    db.add(chat)
+    db.commit()
+
+    history = (
+        db.query(ChatHistory)
+        .filter(ChatHistory.finding_id == finding_id)
+        .order_by(ChatHistory.created_at.asc())
+        .all()
+    )
+
+    scan_id = finding.scan_id
+    db.close()
+
+    return templates.TemplateResponse(
+        request=request,
+        name="chat.html",
+        context={
+            "finding": finding,
+            "scan_id": scan_id,
+            "history": history,
+            "answer": answer
+        }
     )
