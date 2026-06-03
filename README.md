@@ -1,5 +1,5 @@
-1. Hero Section
-# AI DevSecOps Platform
+
+## 1. AI DevSecOps Platform
 
 AI-powered DevSecOps orchestration platform using:
 
@@ -14,7 +14,7 @@ This platform automates security scanning, AI-based risk analysis, vulnerability
 
 Thêm screenshot dashboard ngay đầu.
 
-2. Architecture Diagram
+## 2. Architecture Diagram
 
 Bạn nên thêm ảnh:
 
@@ -30,11 +30,12 @@ FastAPI Dashboard + SQLite
 
 Ví dụ:
 
-## Architecture
+## 3. Architecture
 
 ![Architecture](docs/images/architecture.png)
-3. Features
-## Features
+
+
+## 4. Features
 
 - Automated CI/CD security scanning
 - AI-powered vulnerability analysis
@@ -46,8 +47,8 @@ Ví dụ:
 - Dockerized deployment
 - Source code mounting support
 - Open-source extensible architecture
-4. Tech Stack
-## Tech Stack
+
+## 5. Tech Stack
 
 | Component | Technology |
 |---|---|
@@ -64,9 +65,9 @@ Ví dụ:
 
 Đây là phần người dùng nhìn đầu tiên.
 
-# Quick Start
+## 6. Quick Start
 
-## Clone repository
+1. Clone repository
 
 ```bash
 git clone https://github.com/yourname/ai-devsecops-platform.git
@@ -84,11 +85,11 @@ docker compose up -d --build
 Access services
 Service	URL
 Dashboard	http://localhost:8000
-n8n	http://localhost:5679
-
+n8n	http://localhost:5678
+```
 ---
 
-# 6. Setup Ollama
+2. Setup Ollama
 
 ```md
 # Setup Ollama
@@ -105,10 +106,10 @@ ollama pull qwen2.5:3b
 Verify:
 
 curl http://localhost:11434/api/tags
-
+```
 ---
 
-# 7. Import n8n Workflow
+3. Import n8n Workflow
 
 ```md
 # Import Workflow
@@ -116,16 +117,11 @@ curl http://localhost:11434/api/tags
 1. Open n8n
 2. Import workflow JSON from:
 
-```text
-n8n/workflows/
-Configure:
-Ollama URL
-Dashboard API URL
-Webhook URL
-
+import two flow in /n8n/workflow
+```
 ---
 
-# 8. GitHub Actions Integration
+4. GitHub Actions Integration
 
 ```md
 # GitHub Actions Integration
@@ -138,14 +134,14 @@ N8N_WEBHOOK_URL
 Example:
 
 env:
-  N8N_WEBHOOK_URL: https://xxxxx.ngrok-free.app/webhook/security-scan
-
+  N8N_WEBHOOK_URL: https://xxxxx.ngrok-free.dev/webhook/security-scan
+```
 ---
 
-# 9. Screenshots
+## 7. Screenshots
 
 Bạn nên có:
-
+![Architecture](docs/images/architecture.png)
 ```text
 Dashboard
 n8n workflow
@@ -157,12 +153,13 @@ Ví dụ:
 ## Dashboard
 
 ![Dashboard](docs/images/dashboard.png)
-
-## n8n Workflow
+```
+## 8. n8n Workflow
 
 ![Workflow](docs/images/workflow.png)
-10. Project Structure
-# Project Structure
+
+## 9. Project Structure
+Project Structure
 
 ```text
 ai-devsecops-platform/
@@ -174,10 +171,10 @@ ai-devsecops-platform/
 ├── sample-reports/
 ├── docker-compose.yml
 └── README.md
-
+```
 ---
 
-# 11. Troubleshooting
+## 10. Troubleshooting
 
 Ví dụ:
 
@@ -195,10 +192,10 @@ Port already allocated
 Change:
 
 N8N_PORT=5679
-
+```
 ---
 
-# 12. Future Improvements
+## 11. Future Improvements
 
 ```md
 # Future Improvements
@@ -210,7 +207,7 @@ N8N_PORT=5679
 - AI code auto-remediation
 - Slack/Discord integration
 - CVE correlation engine
-13. License
-# License
-
+```
+## 12. License
+License
 MIT License
