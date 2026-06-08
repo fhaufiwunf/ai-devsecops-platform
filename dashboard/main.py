@@ -16,7 +16,7 @@ engine = create_engine("sqlite:///./devsecops_scans.db", connect_args={"check_sa
 SessionLocal = sessionmaker(bind=engine)
 Base = declarative_base()
 templates = Jinja2Templates(directory="templates")
-SOURCE_ROOT = "/home/giang/devsecops-project"
+SOURCE_ROOT = os.getenv("SOURCE_CODE_PATH", "/workspace/source")
 
 class Scan(Base):
     __tablename__ = "scans"
@@ -271,7 +271,7 @@ def ask_ai(request: Request, finding_id: int, question: str = Form(...)):
 
     try:
         res = requests.post(
-            "http://localhost:5678/webhook/ai-chat",
+            os.getenv("N8N_CHAT_WEBHOOK_URL", "http://n8n:5678/webhook/ai-chat"),
             json=payload,
             timeout=180
         )
