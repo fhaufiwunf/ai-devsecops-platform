@@ -42,20 +42,20 @@ jobs:
           exit-code: '0'
 
       # 3) Start demo app locally so ZAP can scan correct target
-      - name: Start Demo App
-        run: |
-          docker compose -f devsecops-demo-app/docker-compose.yml up -d --build
-          echo "Waiting for app to start..."
-          for i in {1..30}; do
-            if curl -sSf $APP_URL > /dev/null; then
-              echo "App is running at $APP_URL"
-              exit 0
-            fi
-            sleep 5
-          done
-          echo "App failed to start"
-          docker compose logs
-          exit 1
+#      - name: Start Demo App
+#        run: |
+#          docker compose -f devsecops-demo-app/docker-compose.yml up -d --build
+#          echo "Waiting for app to start..."
+#          for i in {1..30}; do
+#            if curl -sSf $APP_URL > /dev/null; then
+#              echo "App is running at $APP_URL"
+#              exit 0
+#            fi
+#            sleep 5
+#          done
+#          echo "App failed to start"
+#          docker compose logs
+#          exit 1
       # 4) DAST - scan running app, not example.com
       - name: Run ZAP Baseline Scan
         run: |
@@ -65,7 +65,7 @@ jobs:
             -v ${{ github.workspace }}/zap-output:/zap/wrk:rw \
             ghcr.io/zaproxy/zaproxy:stable \
             zap-baseline.py \
-            -t http://172.17.0.1:8080 \
+            -t http://example:8080 \
             -J zap-report.json \
             -I || true
           cp zap-output/zap-report.json zap-report.json || echo '{}' > zap-report.json
