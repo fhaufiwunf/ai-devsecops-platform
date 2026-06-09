@@ -76,83 +76,7 @@ This platform connects the following DevSecOps components into one automated wor
 ---
 
 ## Architecture
-
-```mermaid
-flowchart LR
-    DEV[Developer] --> GH[GitHub Repository]
-    GH --> GHA[GitHub Actions CI/CD Pipeline]
-
-    subgraph SCAN[Security Scanning Stage]
-        SEM[Semgrep SAST]
-        TRI[Trivy Dependency / Secret / Misconfiguration Scan]
-        ZAP[OWASP ZAP DAST]
-    end
-
-    GHA --> SEM
-    GHA --> TRI
-    GHA --> ZAP
-
-    SEM --> REPORT[Security Reports JSON]
-    TRI --> REPORT
-    ZAP --> REPORT
-
-    REPORT --> MAIN_WEBHOOK[n8n Webhook: /security-scan]
-
-    subgraph N8N_MAIN[n8n Main Security Workflow]
-        PARSE[Parse Reports]
-        NORMALIZE[Normalize Findings]
-        SCORE[Risk Pre-Scoring]
-        GATE[Security Decision Gate]
-        FORMAT[Format Dashboard Report]
-    end
-
-    MAIN_WEBHOOK --> PARSE
-    PARSE --> NORMALIZE
-    NORMALIZE --> SCORE
-    SCORE --> GATE
-    GATE --> FORMAT
-
-    FORMAT --> API[FastAPI Dashboard API]
-    API --> DB[(SQLite Database)]
-    DB --> UI[Web Dashboard]
-
-    GATE --> RESPONSE[n8n Response]
-    RESPONSE --> GHA
-
-    GHA -->|ALLOW| CD[Docker Hub / Kubernetes Deployment]
-    GHA -->|BLOCK| STOP[Stop Deployment]
-
-    UI --> CHAT_BUTTON[Chat with AI]
-    CHAT_BUTTON --> CHAT_WEBHOOK[n8n Webhook: /ai-chat]
-
-    subgraph N8N_CHAT[n8n AI Chat Assistant Workflow]
-        VALIDATE[Validate Input]
-        PROMPT[Build Remediation Prompt]
-        ROUTER[AI Provider Router]
-        PARSE_AI[Parse AI Response]
-    end
-
-    CHAT_WEBHOOK --> VALIDATE
-    VALIDATE --> PROMPT
-    PROMPT --> ROUTER
-
-    subgraph AI_PROVIDERS[Supported AI Providers]
-        OLLAMA[Ollama Local / LAN]
-        OPENAI[OpenAI-Compatible API]
-        CLAUDE[Anthropic Claude API]
-    end
-
-    ROUTER --> OLLAMA
-    ROUTER --> OPENAI
-    ROUTER --> CLAUDE
-    OLLAMA --> PARSE_AI
-    OPENAI --> PARSE_AI
-    CLAUDE --> PARSE_AI
-    PARSE_AI --> UI
-
-    SOURCE[Mounted Source Code\n/workspace/source] --> API
-    SOURCE --> CHAT_WEBHOOK
-```
+![Architecture](screenshot/architecture_v2.SVG)
 
 ---
 
@@ -463,11 +387,11 @@ The platform uses two workflows.
 
 ### 1. Main Security Scan workflow
 
-![workflow1](sreenshot/workflow1.png)
+![workflow1](screenshot/workflow1.png)
 
 ### 2. AI Chat Assistant workflow
 
-![workflow2](sreenshot/workflow2.png)
+![workflow2](screenshot/workflow2.png)
 
 Expected dashboard request to `/ai-chat`:
 
@@ -568,7 +492,7 @@ flowchart LR
 
 The dashboard provides a local web interface for reviewing scan results.
 
-![dashboard](sreenshot/Dashboard.png)
+![dashboard](screenshot/Dashboard.png)
 
 Main capabilities:
 
