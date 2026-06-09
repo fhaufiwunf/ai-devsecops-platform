@@ -11,225 +11,66 @@
       "type": "n8n-nodes-base.webhook",
       "typeVersion": 2.1,
       "position": [
-        -432,
-        0
+        -1568,
+        112
       ],
-      "id": "6bf9d31c-6f79-4f1d-a57d-083d60b09fef",
+      "id": "6415e32d-a9ac-4704-9367-d95dadbbda82",
       "name": "Webhook",
       "webhookId": "073688a0-40c7-48c5-8770-899a4454c4b9"
     },
     {
       "parameters": {
-        "conditions": {
-          "options": {
-            "caseSensitive": true,
-            "leftValue": "",
-            "typeValidation": "strict",
-            "version": 3
-          },
-          "conditions": [
-            {
-              "id": "e6a79c99-aa42-4489-a3fb-dc404ba5e777",
-              "leftValue": "={{ $json.pipeline_decision === \"BLOCK\" }}",
-              "rightValue": "=",
-              "operator": {
-                "type": "boolean",
-                "operation": "true",
-                "singleValue": true
-              }
-            }
-          ],
-          "combinator": "and"
-        },
-        "options": {}
-      },
-      "type": "n8n-nodes-base.if",
-      "typeVersion": 2.3,
-      "position": [
-        800,
-        0
-      ],
-      "id": "bce82ff4-267d-476b-a543-ae6ee0de5961",
-      "name": "If"
-    },
-    {
-      "parameters": {
-        "method": "POST",
-        "url": "http://192.168.242.1:11434/api/generate",
-        "sendBody": true,
-        "specifyBody": "=json",
-        "bodyParameters": {
-          "parameters": [
-            {}
-          ]
-        },
-        "jsonBody": "={\n  \"model\": \"qwen2.5:3b\",\n  \"prompt\": {{ JSON.stringify($json.ai_prompt) }},\n  \"stream\": false,\n  \"options\": {\n    \"temperature\": 0,\n    \"num_predict\": 180,\n    \"num_ctx\": 1024\n  }\n}",
-        "options": {
-          "response": {
-            "response": {
-              "fullResponse": true,
-              "responseFormat": "json"
-            }
-          }
-        }
-      },
-      "type": "n8n-nodes-base.httpRequest",
-      "typeVersion": 4.4,
-      "position": [
-        -64,
-        1120
-      ],
-      "id": "58d15955-8193-4b89-9a59-99dff51e0107",
-      "name": "Ollama AI Analysis",
-      "alwaysOutputData": false
-    },
-    {
-      "parameters": {
-        "jsCode": "const previous = $('Build AI Prompt Compact').first().json;\n\nlet raw =\n  $json.body?.response ||\n  $json.response ||\n  \"\";\n\nraw = String(raw)\n  .replace(/```json/g, \"\")\n  .replace(/```/g, \"\")\n  .trim();\n\nconst start = raw.indexOf(\"{\");\nconst end = raw.lastIndexOf(\"}\");\n\nif (start !== -1 && end !== -1) {\n  raw = raw.slice(start, end + 1);\n}\n\nlet ai_result;\n\ntry {\n  ai_result = JSON.parse(raw);\n} catch (e) {\n  ai_result = {\n    severity: \"high\",\n    risk_score: 8,\n    summary: \"AI response parse failed.\",\n    affected_files: [],\n    fix_suggestion: \"Manual review required.\",\n    should_block_pipeline: true,\n    raw_ai_response: raw,\n    parse_error: e.message\n  };\n}\n\nreturn [\n  {\n    json: {\n      ...previous,\n      ai_result\n    }\n  }\n];"
+        "jsCode": "const data = $json.body || $json;\n\nconst metadata = data.metadata || {};\nconst trivy = data.trivy || {};\nconst semgrep = data.semgrep || {};\nconst zap = data.zap || {};\n\nlet findings = [];\n\nfunction cleanHtml(text = \"\") {\n  return String(text).replace(/<[^>]*>/g, \"\").trim();\n}\n\nfunction normalizeSeverity(tool, rawSeverity = \"\") {\n  const toolName = String(tool || \"\").toLowerCase();\n  const s = String(rawSeverity || \"\").toLowerCase();\n\n  // Semgrep severity:\n  // ERROR   -> high\n  // WARNING -> medium\n  // INFO    -> info\n  if (toolName === \"semgrep\") {\n    if (s === \"error\") return \"high\";\n    if (s === \"warning\") return \"medium\";\n    if (s === \"info\") return \"info\";\n  }\n\n  // Trivy / ZAP / generic\n  if (s.includes(\"critical\")) return \"critical\";\n  if (s.includes(\"high\")) return \"high\";\n  if (s.includes(\"medium\")) return \"medium\";\n  if (s.includes(\"moderate\")) return \"medium\";\n  if (s.includes(\"low\")) return \"low\";\n  if (s.includes(\"informational\")) return \"info\";\n  if (s.includes(\"info\")) return \"info\";\n\n  return \"info\";\n}\n\n// Trivy\nfor (const result of trivy.Results || []) {\n  for (const vuln of result.Vulnerabilities || []) {\n    const rawSeverity = vuln.Severity || \"UNKNOWN\";\n\n    findings.push({\n      tool: \"trivy\",\n      type: \"container/dependency\",\n      severity: normalizeSeverity(\"trivy\", rawSeverity),\n      raw_severity: rawSeverity,\n\n      cve: vuln.VulnerabilityID || \"\",\n      package: vuln.PkgName || \"\",\n      installed_version: vuln.InstalledVersion || \"\",\n      fixed_version: vuln.FixedVersion || \"\",\n      title: vuln.Title || vuln.VulnerabilityID || \"\",\n      file: result.Target || \"\",\n      line: null,\n\n      cvss:\n        vuln.CVSS?.nvd?.V3Score ||\n        vuln.CVSS?.redhat?.V3Score ||\n        vuln.CVSS?.ghsa?.V3Score ||\n        0,\n\n      description: cleanHtml(vuln.Description || \"\"),\n      solution: vuln.FixedVersion\n        ? `Upgrade ${vuln.PkgName} to ${vuln.FixedVersion}`\n        : \"\"\n    });\n  }\n}\n\n// Semgrep\nfor (const r of semgrep.results || []) {\n  const rawSeverity = r.extra?.severity || \"UNKNOWN\";\n\n  findings.push({\n    tool: \"semgrep\",\n    type: \"sast\",\n    severity: normalizeSeverity(\"semgrep\", rawSeverity),\n    raw_severity: rawSeverity,\n\n    rule_id: r.check_id || \"\",\n    title: r.extra?.message || r.check_id || \"Semgrep finding\",\n    file: r.path || \"\",\n    line: r.start?.line || null,\n\n    message: r.extra?.message || \"\",\n    code: r.extra?.lines || \"\",\n    cvss: 0,\n\n    description: cleanHtml(\n      r.extra?.metadata?.description ||\n      r.extra?.message ||\n      \"\"\n    ),\n\n    solution: cleanHtml(\n      r.extra?.metadata?.fix ||\n      r.extra?.metadata?.remediation ||\n      \"\"\n    )\n  });\n}\n\n// ZAP\nfor (const site of zap.site || []) {\n  for (const alert of site.alerts || []) {\n    const rawSeverity = alert.riskdesc || alert.risk || \"UNKNOWN\";\n\n    findings.push({\n      tool: \"zap\",\n      type: \"dast\",\n      severity: normalizeSeverity(\"zap\", rawSeverity),\n      raw_severity: rawSeverity,\n\n      title: alert.alert || \"ZAP alert\",\n      url: alert.url || site[\"@name\"] || \"\",\n      file: alert.url || site[\"@name\"] || \"\",\n      line: null,\n\n      confidence: alert.confidence || \"\",\n      description: cleanHtml(alert.desc || \"\"),\n      solution: cleanHtml(alert.solution || \"\"),\n      cvss: 0\n    });\n  }\n}\n\nreturn [\n  {\n    json: {\n      metadata,\n      total_findings: findings.length,\n      findings\n    }\n  }\n];"
       },
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        176,
-        1120
+        -1376,
+        112
       ],
-      "id": "776321b1-6812-47b8-bb7d-fae688539e50",
-      "name": "Parse AI Response"
-    },
-    {
-      "parameters": {
-        "jsCode": "const data = $json.body || $json;\n\nconst trivy = data.trivy || {};\nconst semgrep = data.semgrep || {};\nconst zap = data.zap || {};\n\nlet findings = [];\n\n// Trivy\nfor (const result of trivy.Results || []) {\n  for (const vuln of result.Vulnerabilities || []) {\n    findings.push({\n      tool: \"trivy\",\n      type: \"container/dependency\",\n      severity: vuln.Severity || \"UNKNOWN\",\n      cve: vuln.VulnerabilityID || \"\",\n      package: vuln.PkgName || \"\",\n      installed_version: vuln.InstalledVersion || \"\",\n      fixed_version: vuln.FixedVersion || \"\",\n      title: vuln.Title || \"\",\n      file: result.Target || \"\",\n      cvss:\n        vuln.CVSS?.nvd?.V3Score ||\n        vuln.CVSS?.redhat?.V3Score ||\n        vuln.CVSS?.ghsa?.V3Score ||\n        0,\n      description: vuln.Description || \"\"\n    });\n  }\n}\n\n// Semgrep\nfor (const r of semgrep.results || []) {\n  findings.push({\n    tool: \"semgrep\",\n    type: \"sast\",\n    severity: r.extra?.severity || \"UNKNOWN\",\n    rule_id: r.check_id || \"\",\n    file: r.path || \"\",\n    line: r.start?.line || null,\n    message: r.extra?.message || \"\",\n    code: r.extra?.lines || \"\",\n    cvss: 0,\n    description: r.extra?.metadata?.description || \"\"\n  });\n}\n\n// ZAP\nfor (const site of zap.site || []) {\n  for (const alert of site.alerts || []) {\n    findings.push({\n      tool: \"zap\",\n      type: \"dast\",\n      severity: alert.riskdesc || alert.risk || \"UNKNOWN\",\n      url: alert.url || site[\"@name\"] || \"\",\n      alert: alert.alert || \"\",\n      confidence: alert.confidence || \"\",\n      description: alert.desc || \"\",\n      solution: alert.solution || \"\",\n      cvss: 0\n    });\n  }\n}\n\nreturn [\n  {\n    json: {\n      total_findings: findings.length,\n      findings\n    }\n  }\n];"
-      },
-      "type": "n8n-nodes-base.code",
-      "typeVersion": 2,
-      "position": [
-        -240,
-        0
-      ],
-      "id": "a383bb3d-3060-4a3e-9127-9138ed0a2c07",
+      "id": "aa4f4ca8-dca4-4c5f-ab14-14e80d54d74b",
       "name": "normalize findings"
     },
     {
       "parameters": {
-        "jsCode": "const findings = $json.findings || [];\n\nfunction cleanHtml(text = \"\") {\n  return String(text).replace(/<[^>]*>/g, \"\").trim();\n}\n\nfunction scoreFinding(f) {\n  let score = 0;\n\n  const tool = String(f.tool || \"\").toLowerCase();\n  const severity = String(f.severity || \"\").toLowerCase();\n  const title = String(f.title || f.alert || f.message || \"\").toLowerCase();\n\n  if (tool === \"semgrep\") score += 40;\n  if (tool === \"trivy\") score += 30;\n  if (tool === \"zap\") score += 10;\n\n  if (severity.includes(\"critical\")) score += 50;\n  else if (severity.includes(\"error\")) score += 45;\n  else if (severity.includes(\"high\")) score += 40;\n  else if (severity.includes(\"medium\")) score += 25;\n  else if (severity.includes(\"low\")) score += 10;\n  else if (severity.includes(\"informational\")) score += 1;\n\n  if (title.includes(\"sql injection\")) score += 50;\n  if (title.includes(\"xss\")) score += 40;\n  if (title.includes(\"command injection\")) score += 50;\n  if (title.includes(\"secret\")) score += 35;\n\n  if (f.file && f.line) score += 20;\n\n  return score;\n}\n\nconst enriched = findings.map(f => ({\n  ...f,\n  title: cleanHtml(f.title || f.alert || f.message || \"\"),\n  description: cleanHtml(f.description || \"\"),\n  solution: cleanHtml(f.solution || f.fix || \"\"),\n  priority_score: scoreFinding(f)\n}));\n\nenriched.sort((a, b) => b.priority_score - a.priority_score);\n\nconst ai_findings = enriched.slice(0, 1);       // chỉ gửi 1 lỗi nặng nhất cho AI\nconst normal_findings = enriched.slice(1);      // lỗi còn lại để report\n\nreturn [\n  {\n    json: {\n      original_total_findings: findings.length,\n      ai_findings,\n      normal_findings,\n      all_findings: enriched\n    }\n  }\n];"
+        "jsCode": "const findings = $json.findings || [];\n\nlet counts = {\n  critical: 0,\n  high: 0,\n  medium: 0,\n  low: 0,\n  info: 0\n};\n\nlet tool_counts = {\n  semgrep: 0,\n  trivy: 0,\n  zap: 0\n};\n\nfor (const f of findings) {\n  const sev = String(f.severity || \"info\").toLowerCase();\n  const tool = String(f.tool || \"\").toLowerCase();\n\n  if (counts[sev] !== undefined) {\n    counts[sev]++;\n  } else {\n    counts.info++;\n  }\n\n  if (tool_counts[tool] !== undefined) {\n    tool_counts[tool]++;\n  }\n}\n\nconst baseScore =\n  counts.critical * 10 +\n  counts.high * 7 +\n  counts.medium * 3 +\n  counts.low * 1;\n\nconst normalizedScore = Math.min(10, Math.round(baseScore / 5));\n\nlet block_reasons = [];\n\nif (counts.critical > 0) {\n  block_reasons.push(\"Critical vulnerability found\");\n}\n\nif (counts.high > 0) {\n  block_reasons.push(\"High severity vulnerability found\");\n}\n\n// Nhiều medium cũng nên block vì có thể là rủi ro tích lũy\nif (counts.medium >= 10) {\n  block_reasons.push(\"Too many medium severity findings\");\n}\n\nif (normalizedScore >= 8) {\n  block_reasons.push(\"Risk score threshold exceeded\");\n}\n\nconst shouldBlock = block_reasons.length > 0;\n\nreturn [\n  {\n    json: {\n      ...$json,\n      severity_counts: counts,\n      tool_counts,\n      pre_risk_score: normalizedScore,\n      should_block_precheck: shouldBlock,\n      block_reasons\n    }\n  }\n];"
       },
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        -544,
-        1120
+        -1104,
+        112
       ],
-      "id": "8e38e2fb-f509-4351-a154-cdb87cd584ba",
-      "name": "Deduplicate + Limit Findings"
-    },
-    {
-      "parameters": {
-        "jsCode": "const f = ($json.ai_findings || [])[0];\n\nconst ai_prompt = `\nReturn JSON only.\n\nAnalyze this high-priority vulnerability:\ntool=${f.tool}\nseverity=${f.severity}\nfile=${f.file || \"\"}\nline=${f.line || \"\"}\nurl=${f.url || \"\"}\ntitle=${f.title || \"\"}\npackage=${f.package || \"\"}\ncve=${f.cve || \"\"}\nfixed_version=${f.fixed_version || \"\"}\n\nJSON format:\n{\n \"severity\":\"\",\n \"risk_score\":0,\n \"summary\":\"\",\n \"affected_files\":[],\n \"fix_suggestion\":\"\",\n \"should_block_pipeline\":false\n}\n`;\n\nreturn [\n  {\n    json: {\n      ...$json,\n      ai_prompt\n    }\n  }\n];"
-      },
-      "type": "n8n-nodes-base.code",
-      "typeVersion": 2,
-      "position": [
-        -288,
-        1120
-      ],
-      "id": "be35371c-b024-47a4-9849-93673d9845e4",
-      "name": "Build AI Prompt Compact"
-    },
-    {
-      "parameters": {
-        "jsCode": "const findings = $json.findings || [];\n\nlet counts = {\n  critical: 0,\n  high: 0,\n  medium: 0,\n  low: 0,\n  info: 0\n};\n\nfor (const f of findings) {\n  const sev = String(f.severity || \"\").toLowerCase();\n\n  if (sev.includes(\"critical\")) counts.critical++;\n  else if (sev.includes(\"high\")) counts.high++;\n  else if (sev.includes(\"medium\")) counts.medium++;\n  else if (sev.includes(\"low\")) counts.low++;\n  else counts.info++;\n}\n\nlet baseScore =\n  counts.critical * 10 +\n  counts.high * 7 +\n  counts.medium * 4 +\n  counts.low * 2;\n\nlet normalizedScore = Math.min(10, Math.round(baseScore / 5));\n\nreturn [\n  {\n    json: {\n      ...$json,\n      severity_counts: counts,\n      pre_risk_score: normalizedScore,\n      should_block_precheck:\n        counts.critical > 0 || counts.high >= 3 || normalizedScore >= 8\n    }\n  }\n];"
-      },
-      "type": "n8n-nodes-base.code",
-      "typeVersion": 2,
-      "position": [
-        32,
-        0
-      ],
-      "id": "cfedc055-b8df-40b2-ab1b-2db61fe64a46",
+      "id": "a8946e6b-c8c7-4a75-9743-a38d98c95e12",
       "name": "Risk Pre-Scoring"
     },
     {
       "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ $json }}",
         "options": {}
       },
       "type": "n8n-nodes-base.respondToWebhook",
       "typeVersion": 1.5,
       "position": [
-        1392,
-        160
+        -128,
+        112
       ],
-      "id": "b8cd374f-a388-49b5-8531-6a78d207d08b",
-      "name": "Respond to Webhook3"
-    },
-    {
-      "parameters": {
-        "options": {}
-      },
-      "type": "n8n-nodes-base.respondToWebhook",
-      "typeVersion": 1.5,
-      "position": [
-        1392,
-        -112
-      ],
-      "id": "37ca7cd8-c0d3-42dd-ab56-9583f84fab39",
+      "id": "c8dac60a-01e3-4fe7-995a-e3feae7039bb",
       "name": "Respond to Webhook4"
     },
     {
       "parameters": {
-        "jsCode": "const findings = $json.findings || [];\nconst counts = $json.severity_counts || {};\n\nlet decision = \"ALLOW\";\n\nif (\n  $json.should_block_precheck === true ||\n  (counts.critical || 0) > 0 ||\n  (counts.high || 0) >= 1\n) {\n  decision = \"BLOCK\";\n}\n\nreturn [\n  {\n    json: {\n      project_name: \"dvwa-devsecops\",\n      total_findings: $json.total_findings || findings.length,\n      risk_score: $json.pre_risk_score || 0,\n      severity:\n        (counts.critical || 0) > 0 ? \"critical\" :\n        (counts.high || 0) > 0 ? \"high\" :\n        (counts.medium || 0) > 0 ? \"medium\" :\n        \"low\",\n\n      ai_summary: \"\",\n      ai_fix_suggestion: \"\",\n      should_block_pipeline: decision === \"BLOCK\",\n      pipeline_decision: decision,\n\n      severity_counts: counts,\n\n      ai_findings: [],\n      normal_findings: findings,\n      all_findings: findings\n    }\n  }\n];"
+        "jsCode": "const findings = $json.findings || [];\nconst counts = $json.severity_counts || {};\nconst reasons = $json.block_reasons || [];\n\nconst decision = $json.should_block_precheck === true ? \"BLOCK\" : \"ALLOW\";\n\nconst severity =\n  (counts.critical || 0) > 0 ? \"critical\" :\n  (counts.high || 0) > 0 ? \"high\" :\n  (counts.medium || 0) > 0 ? \"medium\" :\n  (counts.low || 0) > 0 ? \"low\" :\n  \"info\";\n\nreturn [\n  {\n    json: {\n      project_name: $json.metadata?.repo || \"unknown-project\",\n      repo: $json.metadata?.repo || \"\",\n      branch: $json.metadata?.branch || \"\",\n      commit: $json.metadata?.commit || \"\",\n\n      total_findings: $json.total_findings || findings.length,\n      risk_score: $json.pre_risk_score || 0,\n      severity,\n\n      analysis_type: \"rule_based_security_gate\",\n      gate_reasons: reasons,\n\n      ai_summary: \"\",\n      ai_fix_suggestion: \"\",\n\n      should_block_pipeline: decision === \"BLOCK\",\n      pipeline_decision: decision,\n\n      severity_counts: counts,\n      tool_counts: $json.tool_counts || {},\n\n      ai_findings: [],\n      normal_findings: findings,\n      all_findings: findings\n    }\n  }\n];"
       },
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        288,
-        0
+        -848,
+        112
       ],
-      "id": "0fc8b49b-ce2e-490a-a429-ffde295802f8",
+      "id": "50d30060-3eff-4cf0-9c00-c2bc5ee95dc2",
       "name": "Format Report for Dashboard"
-    },
-    {
-      "parameters": {
-        "method": "POST",
-        "url": "http://192.168.242.147:8000/api/scans",
-        "sendBody": true,
-        "specifyBody": "json",
-        "jsonBody": "={{$json}}",
-        "options": {}
-      },
-      "type": "n8n-nodes-base.httpRequest",
-      "typeVersion": 4.4,
-      "position": [
-        656,
-        1120
-      ],
-      "id": "b286bcb9-e60f-4155-a543-1be49f8997fc",
-      "name": "save to dashboard"
-    },
-    {
-      "parameters": {
-        "jsCode": "const ai = $json.ai_result || {};\nconst aiFindings = $json.ai_findings || [];\nconst normalFindings = $json.normal_findings || [];\n\nreturn [\n  {\n    json: {\n      report_type: \"DevSecOps Security Report\",\n      total_findings: $json.original_total_findings,\n      pipeline_decision: ai.should_block_pipeline ? \"BLOCK\" : \"ALLOW\",\n\n      ai_analyzed_findings: aiFindings.map(f => ({\n        severity: f.severity,\n        tool: f.tool,\n        title: f.title,\n        file: f.file || f.url || \"\",\n        line: f.line || \"-\",\n        ai_summary: ai.summary,\n        ai_fix_suggestion: ai.fix_suggestion,\n        risk_score: ai.risk_score\n      })),\n\n      normal_findings_report: normalFindings.map(f => ({\n        severity: f.severity,\n        tool: f.tool,\n        type: f.type,\n        title: f.title,\n        file_or_url: f.file || f.url || \"\",\n        line: f.line || \"-\",\n        suggested_fix: f.solution || f.fixed_version || \"\"\n      }))\n    }\n  }\n];"
-      },
-      "type": "n8n-nodes-base.code",
-      "typeVersion": 2,
-      "position": [
-        1136,
-        -112
-      ],
-      "id": "7d9ef322-8114-446b-b0be-67ca7c5e9c8c",
-      "name": "create report"
-    },
-    {
-      "parameters": {
-        "jsCode": "let raw = $json.response || \"\";\nraw = raw.replace(/```json/g, \"\").replace(/```/g, \"\").trim();\n\nlet ai_result;\n\ntry {\n  ai_result = JSON.parse(raw);\n} catch (e) {\n  ai_result = {\n    severity: \"medium\",\n    risk_score: 5,\n    summary: \"AI response parse failed.\",\n    affected_files: [],\n    fix_suggestion: \"Review manually.\",\n    should_block_pipeline: false\n  };\n}\n\nreturn [\n  {\n    json: {\n      ai_result,\n      ai_findings: $json.ai_findings || [],\n      normal_findings: $json.normal_findings || [],\n      all_findings: $json.all_findings || [],\n      original_total_findings: $json.original_total_findings || 0\n    }\n  }\n];"
-      },
-      "type": "n8n-nodes-base.code",
-      "typeVersion": 2,
-      "position": [
-        1136,
-        160
-      ],
-      "id": "efdb70e3-ffd9-4cdd-b0f0-2f19e848e7d1",
-      "name": "create report1"
     },
     {
       "parameters": {
@@ -243,11 +84,24 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.4,
       "position": [
-        560,
-        0
+        -576,
+        112
       ],
-      "id": "912a2238-c8db-4909-9dd0-f977510d5dbc",
+      "id": "f2122b3b-1ae8-4b72-9257-0fbaa41c9c61",
       "name": "save to database"
+    },
+    {
+      "parameters": {
+        "jsCode": "const gate = $(\"Format Report for Dashboard\").first().json;\nconst dbResponse = $json || {};\n\nreturn [\n  {\n    json: {\n      pipeline_decision: gate.pipeline_decision,\n      should_block_pipeline: gate.should_block_pipeline,\n      risk_score: gate.risk_score,\n      severity: gate.severity,\n      severity_counts: gate.severity_counts,\n      total_findings: gate.total_findings,\n      message:\n        gate.pipeline_decision === \"BLOCK\"\n          ? \"Security gate blocked the pipeline. CD deployment stopped.\"\n          : \"Security gate passed. CD deployment allowed.\",\n      dashboard_saved: true,\n      scan_id: dbResponse.id || dbResponse.scan_id || null\n    }\n  }\n];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -368,
+        112
+      ],
+      "id": "cd059a98-ff13-49d4-ad3c-1014866856ba",
+      "name": "prepare webhook reponse"
     }
   ],
   "pinData": {},
@@ -263,49 +117,11 @@
         ]
       ]
     },
-    "Ollama AI Analysis": {
-      "main": [
-        [
-          {
-            "node": "Parse AI Response",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Parse AI Response": {
-      "main": [
-        []
-      ]
-    },
     "normalize findings": {
       "main": [
         [
           {
             "node": "Risk Pre-Scoring",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Deduplicate + Limit Findings": {
-      "main": [
-        [
-          {
-            "node": "Build AI Prompt Compact",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Build AI Prompt Compact": {
-      "main": [
-        [
-          {
-            "node": "Ollama AI Analysis",
             "type": "main",
             "index": 0
           }
@@ -323,24 +139,6 @@
         ]
       ]
     },
-    "If": {
-      "main": [
-        [
-          {
-            "node": "create report",
-            "type": "main",
-            "index": 0
-          }
-        ],
-        [
-          {
-            "node": "create report1",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
     "Format Report for Dashboard": {
       "main": [
         [
@@ -352,7 +150,18 @@
         ]
       ]
     },
-    "create report": {
+    "save to database": {
+      "main": [
+        [
+          {
+            "node": "prepare webhook reponse",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "prepare webhook reponse": {
       "main": [
         [
           {
@@ -362,33 +171,6 @@
           }
         ]
       ]
-    },
-    "create report1": {
-      "main": [
-        [
-          {
-            "node": "Respond to Webhook3",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "save to database": {
-      "main": [
-        [
-          {
-            "node": "If",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "save to dashboard": {
-      "main": [
-        []
-      ]
     }
   },
   "active": true,
@@ -397,13 +179,14 @@
     "binaryMode": "separate",
     "timeSavedMode": "fixed",
     "callerPolicy": "workflowsFromSameOwner",
-    "availableInMCP": false
+    "availableInMCP": false,
+    "executionTimeout": -1
   },
-  "versionId": "556eabde-704b-4eec-ac83-fd5cb973850c",
+  "versionId": "7babf0da-a0b3-4d7e-a349-b615fd36e6a6",
   "meta": {
-    "templateCredsSetupCompleted": true,
-    "instanceId": "3e234e7f4a32fdcb62d5da41244aaa6356684c932eb110e6af33bf7c9d7f8bb1"
+    "instanceId": "5448416601799471bd98ad596102c4c1d4934b58a56d38140f7b61d9d1555382"
   },
-  "id": "TYKHAD2xBwVTCYEK",
+  "nodeGroups": [],
+  "id": "lx4HpnLbyRkf1KuH",
   "tags": []
 }
