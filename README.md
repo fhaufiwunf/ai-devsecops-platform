@@ -463,11 +463,11 @@ The platform uses two workflows.
 
 ### 1. Main Security Scan workflow
 
-anh workflow 1 o day
+![workflow1](sreenshot/workflow1.png)
 
 ### 2. AI Chat Assistant workflow
 
-anh workflow 2
+![workflow2](sreenshot/workflow2.png)
 
 Expected dashboard request to `/ai-chat`:
 
@@ -568,7 +568,7 @@ flowchart LR
 
 The dashboard provides a local web interface for reviewing scan results.
 
-anh dashboard o day
+![dashboard](sreenshot/Screenshot2026-06-09210440.png)
 
 Main capabilities:
 
