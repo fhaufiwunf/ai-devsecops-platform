@@ -11,10 +11,10 @@
       "type": "n8n-nodes-base.webhook",
       "typeVersion": 2.1,
       "position": [
-        0,
+        -224,
         0
       ],
-      "id": "a952bd76-7cfb-4693-bb1d-1b4099686c5c",
+      "id": "0e1d407a-8942-4d5f-ba0a-5f0c541103d3",
       "name": "Webhook",
       "webhookId": "df9f1075-b68c-473b-94c8-a11fde3ac86d"
     },
@@ -25,10 +25,10 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        208,
+        -16,
         0
       ],
-      "id": "1db1e02d-6015-4251-b563-13806b2c747a",
+      "id": "2f62f6a2-d95f-45e3-a10a-a4884cda85e3",
       "name": "Validate Input"
     },
     {
@@ -38,19 +38,22 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        416,
+        192,
         0
       ],
-      "id": "032dcec7-8d8e-4123-a193-59c63ba11011",
+      "id": "65a9b4b8-8295-4239-b06a-8be2103e290b",
       "name": "Build AI Chat Prompt"
     },
     {
       "parameters": {
         "method": "POST",
-        "url": "http://192.168.0.101:11434/api/generate",
+        "url": "={{$json.ai_url}}",
+        "sendHeaders": true,
+        "specifyHeaders": "json",
+        "jsonHeaders": "={{ JSON.stringify($json.ai_headers) }}",
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={{\n  {\n    model: \"qwen2.5:3b\",\n    prompt: $json.ai_prompt,\n    stream: false,\n    options: {\n      temperature: 0.2,\n      num_predict: 700\n    }\n  }\n}}",
+        "jsonBody": "={{ $json.ai_body }}",
         "options": {}
       },
       "type": "n8n-nodes-base.httpRequest",
@@ -59,12 +62,12 @@
         624,
         0
       ],
-      "id": "f63b3bfc-9cd3-41ff-b4e5-cef9f0067760",
+      "id": "c713109b-1e42-420a-ac32-ba3a326798f4",
       "name": "HTTP Request"
     },
     {
       "parameters": {
-        "jsCode": "const previous = $('Build AI Chat Prompt').first().json;\n\nconst answer =\n  $json.body?.response ||\n  $json.response ||\n  \"\";\n\nreturn [{\n  json: {\n    finding_id: previous.finding_id,\n    question: previous.question,\n    answer,\n    created_at: new Date().toISOString()\n  }\n}];"
+        "jsCode": "const previous = $(\"Load AI Config\").first().json;\nconst provider = previous.ai_provider;\n\nlet answer = \"\";\n\nif (provider === \"ollama\") {\n  answer =\n    $json.response ||\n    $json.body?.response ||\n    \"\";\n}\n\nelse if (provider === \"openai\") {\n  answer =\n    $json.choices?.[0]?.message?.content ||\n    $json.body?.choices?.[0]?.message?.content ||\n    \"\";\n}\n\nelse if (provider === \"anthropic\") {\n  const content = $json.content || $json.body?.content || [];\n  answer = content\n    .map(item => item.text || \"\")\n    .join(\"\\n\")\n    .trim();\n}\n\nreturn [\n  {\n    json: {\n      finding_id: previous.finding_id,\n      question: previous.question,\n      ai_provider: provider,\n      answer,\n      created_at: new Date().toISOString()\n    }\n  }\n];"
       },
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
@@ -72,7 +75,7 @@
         816,
         0
       ],
-      "id": "ab9a6d8f-491f-4c3a-bdb3-b43f5d323003",
+      "id": "39460934-fd79-4ca0-aee4-8fc9464843f0",
       "name": "Parse AI Response"
     },
     {
@@ -87,8 +90,21 @@
         1024,
         0
       ],
-      "id": "75271ccf-607f-4fdd-b406-72445cbd56aa",
+      "id": "a950db40-22a2-48e9-83a7-9399fd02d157",
       "name": "Respond to Webhook"
+    },
+    {
+      "parameters": {
+        "jsCode": "const provider = String($env.AI_PROVIDER || \"ollama\").toLowerCase();\n\nconst temperature = Number($env.AI_TEMPERATURE || 0.2);\nconst maxTokens = Number($env.AI_MAX_TOKENS || 700);\n\nlet ai_url = \"\";\nlet ai_headers = {\n  \"Content-Type\": \"application/json\"\n};\nlet ai_body = {};\n\nif (provider === \"ollama\") {\n  const baseUrl = String($env.OLLAMA_BASE_URL || \"http://host.docker.internal:11434\").replace(/\\/$/, \"\");\n  const model = String($env.OLLAMA_MODEL || \"qwen2.5:3b\");\n\n  ai_url = `${baseUrl}/api/generate`;\n\n  ai_body = {\n    model,\n    prompt: $json.ai_prompt,\n    stream: false,\n    options: {\n      temperature,\n      num_predict: maxTokens\n    }\n  };\n}\n\nelse if (provider === \"openai\") {\n  const baseUrl = String($env.OPENAI_COMPATIBLE_BASE_URL || \"\").replace(/\\/$/, \"\");\n  const apiKey = String($env.OPENAI_COMPATIBLE_API_KEY || \"\");\n  const model = String($env.OPENAI_COMPATIBLE_MODEL || \"gpt-4o-mini\");\n\n  ai_url = `${baseUrl}/chat/completions`;\n\n  ai_headers = {\n    \"Content-Type\": \"application/json\",\n    \"Authorization\": `Bearer ${apiKey}`\n  };\n\n  ai_body = {\n    model,\n    messages: [\n      {\n        role: \"system\",\n        content: \"You are an AI DevSecOps remediation assistant.\"\n      },\n      {\n        role: \"user\",\n        content: $json.ai_prompt\n      }\n    ],\n    temperature,\n    max_tokens: maxTokens\n  };\n}\n\nelse if (provider === \"anthropic\") {\n  const apiKey = String($env.ANTHROPIC_API_KEY || \"\");\n  const model = String($env.ANTHROPIC_MODEL || \"claude-3-5-sonnet-latest\");\n\n  ai_url = \"https://api.anthropic.com/v1/messages\";\n\n  ai_headers = {\n    \"Content-Type\": \"application/json\",\n    \"x-api-key\": apiKey,\n    \"anthropic-version\": \"2023-06-01\"\n  };\n\n  ai_body = {\n    model,\n    max_tokens: maxTokens,\n    temperature,\n    messages: [\n      {\n        role: \"user\",\n        content: $json.ai_prompt\n      }\n    ]\n  };\n}\n\nelse {\n  throw new Error(`Unsupported AI_PROVIDER: ${provider}`);\n}\n\nreturn [\n  {\n    json: {\n      ...$json,\n      ai_provider: provider,\n      ai_url,\n      ai_headers,\n      ai_body\n    }\n  }\n];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        416,
+        0
+      ],
+      "id": "3e8d2f76-d332-4101-9ba3-dc7f7959642b",
+      "name": "Load AI Config"
     }
   ],
   "pinData": {},
@@ -119,7 +135,7 @@
       "main": [
         [
           {
-            "node": "HTTP Request",
+            "node": "Load AI Config",
             "type": "main",
             "index": 0
           }
@@ -147,17 +163,33 @@
           }
         ]
       ]
+    },
+    "Load AI Config": {
+      "main": [
+        [
+          {
+            "node": "HTTP Request",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     }
   },
   "active": true,
   "settings": {
     "executionOrder": "v1",
-    "binaryMode": "separate"
+    "binaryMode": "separate",
+    "timeSavedMode": "fixed",
+    "callerPolicy": "workflowsFromSameOwner",
+    "availableInMCP": false,
+    "executionTimeout": -1
   },
-  "versionId": "bfa0e3ff-1e76-4ce5-b435-64c8e16324ca",
+  "versionId": "3302a7cb-0d61-422b-b355-b6da113d45a4",
   "meta": {
-    "instanceId": "3e234e7f4a32fdcb62d5da41244aaa6356684c932eb110e6af33bf7c9d7f8bb1"
+    "instanceId": "5448416601799471bd98ad596102c4c1d4934b58a56d38140f7b61d9d1555382"
   },
-  "id": "4sv9xvQ6fzL4hovU",
+  "nodeGroups": [],
+  "id": "MHIcQH7EcmlkAdxT",
   "tags": []
 }
