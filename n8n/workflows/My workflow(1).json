@@ -234,7 +234,7 @@
     {
       "parameters": {
         "method": "POST",
-        "url": "http://192.168.242.147:8000/api/scans",
+        "url": "http://dashboard:8000/api/scans",
         "sendBody": true,
         "specifyBody": "json",
         "jsonBody": "={{$json}}",
