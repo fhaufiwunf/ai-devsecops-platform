@@ -824,28 +824,6 @@ Planned improvements:
 
 ---
 
-## Research Positioning
-
-This project can be positioned as:
-
-> An AI-powered DevSecOps orchestration platform that combines automated vulnerability detection, workflow-based risk analysis, and AI-assisted remediation in a CI/CD environment.
-
-Possible thesis title:
-
-```text
-AI-Powered DevSecOps Orchestration Platform for Automated Vulnerability Analysis and Remediation Support
-```
-
-Alternative titles:
-
-```text
-LLM-Assisted Vulnerability Management Platform
-Open Source AI Security Orchestration Framework
-AI-Assisted DevSecOps Pipeline for Vulnerability Detection and Remediation
-```
-
----
-
 ## License
 
 This project is licensed under the MIT License. See the `LICENSE` file for details.
