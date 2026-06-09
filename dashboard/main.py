@@ -16,7 +16,7 @@ engine = create_engine("sqlite:///./devsecops_scans.db", connect_args={"check_sa
 SessionLocal = sessionmaker(bind=engine)
 Base = declarative_base()
 templates = Jinja2Templates(directory="templates")
-SOURCE_ROOT = os.getenv("SOURCE_CODE_PATH", "/workspace/source")
+SOURCE_ROOT = os.getenv("CONTAINER_SOURCE_PATH", "/workspace/source")
 
 class Scan(Base):
     __tablename__ = "scans"
