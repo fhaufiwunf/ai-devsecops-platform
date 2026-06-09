@@ -84,48 +84,11 @@ This platform connects the following DevSecOps components into one automated wor
 
 ### Main security scan workflow
 
-```mermaid
-sequenceDiagram
-    participant Dev as Developer
-    participant GH as GitHub
-    participant CI as GitHub Actions
-    participant Tools as Semgrep / Trivy / ZAP
-    participant N8N as n8n /security-scan
-    participant API as FastAPI Dashboard
-    participant DB as SQLite
-
-    Dev->>GH: Push code
-    GH->>CI: Trigger pipeline
-    CI->>Tools: Run security scans
-    Tools-->>CI: Generate JSON reports
-    CI->>N8N: POST final report
-    N8N->>N8N: Parse and normalize findings
-    N8N->>N8N: Calculate risk score
-    N8N->>N8N: Decide ALLOW or BLOCK
-    N8N->>API: Save scan result
-    API->>DB: Store scan and findings
-    N8N-->>CI: Return pipeline decision
-    CI->>CI: Continue deployment or stop pipeline
-```
+![workflow1](screenshot/workflow1.png)
 
 ### AI chat workflow
 
-```mermaid
-sequenceDiagram
-    participant User as Developer
-    participant UI as Dashboard
-    participant N8N as n8n /ai-chat
-    participant AI as Ollama / OpenAI / Claude
-
-    User->>UI: Click Chat with AI on a finding
-    UI->>UI: Load finding data and source context
-    UI->>N8N: POST finding, question, source_context
-    N8N->>N8N: Build remediation prompt
-    N8N->>AI: Send prompt to selected provider
-    AI-->>N8N: Return remediation answer
-    N8N-->>UI: Return answer JSON
-    UI-->>User: Show root cause, impact, fix, verification steps
-```
+![workflow1](screenshot/workflow2.png)
 
 ---
 
@@ -386,12 +349,38 @@ dashboard:
 The platform uses two workflows.
 
 ### 1. Main Security Scan workflow
+```mermaid
+flowchart TD
+    A[Webhook: /security-scan] --> B[Parse Trivy Report]
+    A --> C[Parse Semgrep Report]
+    A --> D[Parse ZAP Report]
+    B --> E[Normalize Findings]
+    C --> E
+    D --> E
+    E --> F[Risk Pre-Scoring]
+    F --> G[Format Report for Dashboard]
+    G --> H[Save to FastAPI Dashboard]
+    H --> I[Decision Gate]
+    I -->|ALLOW| J[Respond: pipeline_decision ALLOW]
+    I -->|BLOCK| K[Respond: pipeline_decision BLOCK]
+```
 
-![workflow1](screenshot/workflow1.png)
 
 ### 2. AI Chat Assistant workflow
 
-![workflow2](screenshot/workflow2.png)
+```mermaid
+flowchart TD
+    A[Webhook: /ai-chat] --> B[Validate Input]
+    B --> C[Build AI Chat Prompt]
+    C --> D[AI Provider Router]
+    D -->|AI_PROVIDER=ollama| E[Ollama /api/generate]
+    D -->|AI_PROVIDER=openai| F[OpenAI-Compatible /chat/completions]
+    D -->|AI_PROVIDER=anthropic| G[Anthropic /v1/messages]
+    E --> H[Parse AI Response]
+    F --> H
+    G --> H
+    H --> I[Respond to Webhook]
+```
 
 Expected dashboard request to `/ai-chat`:
 
