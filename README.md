@@ -568,7 +568,7 @@ flowchart LR
 
 The dashboard provides a local web interface for reviewing scan results.
 
-![dashboard](sreenshot/Screenshot2026-06-09210440.png)
+![dashboard](sreenshot/Dashboard.png)
 
 Main capabilities:
 
