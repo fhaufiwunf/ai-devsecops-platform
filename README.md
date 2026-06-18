@@ -10,7 +10,7 @@ The system supports both local and cloud LLMs:
 - **OpenAI-compatible APIs**, for example OpenAI or other compatible providers
 - **Anthropic Claude API**, for Claude-based remediation assistance
 
-this is the video demo:
+This is the video demo:
 https://drive.google.com/file/d/1eSD1bXpNpHq4UMUAAYsB6ewXIkX5Nwis/view?usp=drive_link
 ---
 
