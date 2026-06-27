@@ -329,10 +329,14 @@ def ask_ai(request: Request, finding_id: int, question: str = Form(...)):
 
         try:
             res = requests.post(
-                os.getenv("N8N_CHAT_WEBHOOK_URL", "http://n8n:5678/webhook/ai-chat"),
-                json=payload,
-                timeout=180,
+            os.getenv("N8N_CHAT_WEBHOOK_URL", "http://n8n:5678/webhook/ai-chat"),
+            json=payload,
+            timeout=(
+                   10,
+                   int(os.getenv("AI_REQUEST_TIMEOUT", "600"))
+            ),
             )
+
             res.raise_for_status()
 
             try:
