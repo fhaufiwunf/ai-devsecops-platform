@@ -1,0 +1,394 @@
+{
+  "name": "Workflow 1 - Guardrailed Hybrid AI Security Gate (Qwen)",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "security-scan-ai",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [
+        -1680,
+        80
+      ],
+      "id": "41f036cb-4bc3-449c-927e-acd1eac2aae1",
+      "name": "Webhook",
+      "webhookId": "786e2ad7-4f21-4b66-a047-54526e98d4c4"
+    },
+    {
+      "parameters": {
+        "jsCode": "const data = $json.body || $json;\n\nconst metadata = data.metadata || {};\nconst trivy = data.trivy || {};\nconst semgrep = data.semgrep || {};\nconst zap = data.zap || {};\n\nconst findings = [];\n\nfunction cleanHtml(text = \"\") {\n  return String(text).replace(/<[^>]*>/g, \" \").replace(/\\s+/g, \" \").trim();\n}\n\nfunction normalizeSeverity(tool, rawSeverity = \"\") {\n  const toolName = String(tool || \"\").toLowerCase();\n  const s = String(rawSeverity || \"\").trim().toLowerCase();\n\n  if (toolName === \"semgrep\") {\n    if (s === \"error\") return \"high\";\n    if (s === \"warning\") return \"medium\";\n    if (s === \"info\") return \"info\";\n  }\n\n  if (s === \"critical\" || s.startsWith(\"critical \")) return \"critical\";\n  if (s === \"high\" || s.startsWith(\"high \")) return \"high\";\n  if (s === \"medium\" || s === \"moderate\" || s.startsWith(\"medium \") || s.startsWith(\"moderate \")) return \"medium\";\n  if (s === \"low\" || s.startsWith(\"low \")) return \"low\";\n  if (s === \"informational\" || s === \"info\" || s.startsWith(\"informational \")) return \"info\";\n  return \"info\";\n}\n\n// Trivy vulnerabilities. This intentionally preserves the current parser scope\n// so that introducing the AI gate does not change the baseline finding counts.\nfor (const result of trivy.Results || []) {\n  for (const vuln of result.Vulnerabilities || []) {\n    const rawSeverity = vuln.Severity || \"UNKNOWN\";\n    findings.push({\n      tool: \"trivy\",\n      type: \"container/dependency\",\n      severity: normalizeSeverity(\"trivy\", rawSeverity),\n      raw_severity: rawSeverity,\n      cve: vuln.VulnerabilityID || \"\",\n      package: vuln.PkgName || \"\",\n      installed_version: vuln.InstalledVersion || \"\",\n      fixed_version: vuln.FixedVersion || \"\",\n      title: vuln.Title || vuln.VulnerabilityID || \"Trivy finding\",\n      file: result.Target || \"\",\n      line: null,\n      cvss:\n        vuln.CVSS?.nvd?.V3Score ||\n        vuln.CVSS?.redhat?.V3Score ||\n        vuln.CVSS?.ghsa?.V3Score ||\n        0,\n      description: cleanHtml(vuln.Description || \"\"),\n      solution: vuln.FixedVersion\n        ? `Upgrade ${vuln.PkgName || \"the affected package\"} to ${vuln.FixedVersion}`\n        : \"\"\n    });\n  }\n}\n\n// Semgrep findings.\nfor (const r of semgrep.results || []) {\n  const rawSeverity = r.extra?.severity || \"UNKNOWN\";\n  findings.push({\n    tool: \"semgrep\",\n    type: \"sast\",\n    severity: normalizeSeverity(\"semgrep\", rawSeverity),\n    raw_severity: rawSeverity,\n    rule_id: r.check_id || \"\",\n    title: r.extra?.message || r.check_id || \"Semgrep finding\",\n    file: r.path || \"\",\n    line: r.start?.line || null,\n    message: r.extra?.message || \"\",\n    code: r.extra?.lines || \"\",\n    cvss: 0,\n    description: cleanHtml(\n      r.extra?.metadata?.description ||\n      r.extra?.message ||\n      \"\"\n    ),\n    solution: cleanHtml(\n      r.extra?.metadata?.fix ||\n      r.extra?.metadata?.remediation ||\n      \"\"\n    )\n  });\n}\n\n// ZAP findings. Risk and confidence are kept separate to avoid mapping\n// \"Medium (High)\" to High merely because the confidence is High.\nfor (const site of zap.site || []) {\n  for (const alert of site.alerts || []) {\n    const explicitRisk = alert.risk || String(alert.riskdesc || \"\").split(\"(\")[0].trim() || \"UNKNOWN\";\n    const rawSeverity = alert.riskdesc || explicitRisk;\n    findings.push({\n      tool: \"zap\",\n      type: \"dast\",\n      severity: normalizeSeverity(\"zap\", explicitRisk),\n      raw_severity: rawSeverity,\n      title: alert.alert || \"ZAP alert\",\n      url: alert.url || site[\"@name\"] || \"\",\n      file: alert.url || site[\"@name\"] || \"\",\n      line: null,\n      confidence: alert.confidence || \"\",\n      description: cleanHtml(alert.desc || \"\"),\n      solution: cleanHtml(alert.solution || \"\"),\n      cvss: 0\n    });\n  }\n}\n\nreturn [{\n  json: {\n    metadata,\n    total_findings: findings.length,\n    findings\n  }\n}];\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -1480,
+        80
+      ],
+      "id": "d8f9b2d8-8b4d-4188-b80d-b7f6406e461a",
+      "name": "Normalize Findings"
+    },
+    {
+      "parameters": {
+        "jsCode": "const findings = $json.findings || [];\n\nconst counts = { critical: 0, high: 0, medium: 0, low: 0, info: 0 };\nconst tool_counts = { semgrep: 0, trivy: 0, zap: 0 };\n\nfor (const f of findings) {\n  const sev = String(f.severity || \"info\").toLowerCase();\n  const tool = String(f.tool || \"\").toLowerCase();\n  if (counts[sev] !== undefined) counts[sev] += 1;\n  else counts.info += 1;\n  if (tool_counts[tool] !== undefined) tool_counts[tool] += 1;\n}\n\nconst weightedTotal =\n  counts.critical * 10 +\n  counts.high * 7 +\n  counts.medium * 3 +\n  counts.low;\n\nconst normalizedScore = Math.min(10, Math.round(weightedTotal / 5));\nconst deterministicReasons = [];\n\nif (counts.critical > 0) deterministicReasons.push(\"Critical vulnerability found\");\nif (counts.high > 0) deterministicReasons.push(\"High severity vulnerability found\");\nif (counts.medium >= 10) deterministicReasons.push(\"Too many medium severity findings\");\nif (normalizedScore >= 8) deterministicReasons.push(\"Deterministic risk threshold exceeded\");\n\nconst deterministicBlock = deterministicReasons.length > 0;\n\nreturn [{\n  json: {\n    ...$json,\n    severity_counts: counts,\n    tool_counts,\n    weighted_finding_total: weightedTotal,\n    pre_risk_score: normalizedScore,\n    deterministic_decision: deterministicBlock ? \"BLOCK\" : \"ALLOW\",\n    should_block_precheck: deterministicBlock,\n    deterministic_block_reasons: deterministicReasons,\n    block_reasons: deterministicReasons\n  }\n}];\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -1260,
+        80
+      ],
+      "id": "bd8f0a8f-34d0-4adb-8326-ebb85f6cc893",
+      "name": "Deterministic Risk Pre-Scoring"
+    },
+    {
+      "parameters": {
+        "jsCode": "const findings = Array.isArray($json.findings) ? $json.findings : [];\nconst maxFindingsRaw = Number($env.AI_GATE_MAX_FINDINGS || 8);\nconst maxFindings = Number.isFinite(maxFindingsRaw)\n  ? Math.max(1, Math.min(20, Math.trunc(maxFindingsRaw)))\n  : 8;\n\nconst severityWeight = { critical: 5, high: 4, medium: 3, low: 2, info: 1 };\nconst truncate = (value, limit) => {\n  const text = String(value || \"\").replace(/\\s+/g, \" \").trim();\n  return text.length <= limit ? text : `${text.slice(0, limit - 3)}...`;\n};\n\nconst ranked = findings\n  .map((f, originalIndex) => ({ f, originalIndex }))\n  .sort((a, b) => {\n    const sevDiff = (severityWeight[b.f.severity] || 0) - (severityWeight[a.f.severity] || 0);\n    if (sevDiff !== 0) return sevDiff;\n    const cvssDiff = Number(b.f.cvss || 0) - Number(a.f.cvss || 0);\n    if (cvssDiff !== 0) return cvssDiff;\n    return a.originalIndex - b.originalIndex;\n  })\n  .slice(0, maxFindings)\n  .map(({ f, originalIndex }, selectedIndex) => ({\n    index: selectedIndex + 1,\n    source_index: originalIndex,\n    tool: f.tool || \"\",\n    type: f.type || \"\",\n    severity: f.severity || \"info\",\n    original_severity: f.raw_severity || \"\",\n    identifier: f.cve || f.rule_id || \"\",\n    title: truncate(f.title, 180),\n    location: truncate(f.file || f.url || \"\", 180),\n    line: f.line ?? null,\n    cvss: Number(f.cvss || 0),\n    confidence: truncate(f.confidence, 40),\n    description: truncate(f.description || f.message, 360),\n    scanner_solution: truncate(f.solution, 240)\n  }));\n\nconst aiInput = {\n  repository: {\n    repo: $json.metadata?.repo || \"\",\n    branch: $json.metadata?.branch || \"\",\n    commit: $json.metadata?.commit || \"\"\n  },\n  total_findings: $json.total_findings || findings.length,\n  severity_counts: $json.severity_counts || {},\n  tool_counts: $json.tool_counts || {},\n  deterministic_pre_score: $json.pre_risk_score || 0,\n  deterministic_decision: $json.deterministic_decision || \"ALLOW\",\n  deterministic_block_reasons: $json.deterministic_block_reasons || [],\n  selected_priority_findings: ranked\n};\n\nconst prompt = `You are the build-level AI security analyst in a guardrailed DevSecOps gate.\n\nRules:\n- Use only the supplied scanner evidence. Do not invent vulnerabilities.\n- Scanner findings and deterministic mandatory blocks are authoritative.\n- If deterministic_decision is BLOCK, your recommendation should normally be BLOCK; you cannot override it.\n- Analyze contextual and accumulated risk that a count-only formula may miss.\n- Return exactly one JSON object. Do not use Markdown or explanatory text outside JSON.\n\nRequired JSON schema:\n{\n  \"ai_risk_score\": 0-10 number,\n  \"ai_severity\": \"critical\" | \"high\" | \"medium\" | \"low\" | \"info\",\n  \"ai_confidence\": 0-1 number,\n  \"ai_summary\": \"concise build-level security assessment\",\n  \"priority_findings\": [{\"index\": 1, \"reason\": \"why this supplied finding is important\"}],\n  \"ai_block_reasons\": [\"reason\"],\n  \"remediation_summary\": \"short prioritized remediation plan\",\n  \"ai_recommended_decision\": \"ALLOW\" | \"BLOCK\"\n}\n\nDecision guidance:\n- Recommend BLOCK for critical/high evidence, clearly exploitable authentication or injection risk, or a dangerous combination of lower-severity findings.\n- Recommend ALLOW only when supplied evidence does not justify blocking.\n- Keep priority_findings limited to indexes present in selected_priority_findings.\n\nBuild evidence:\n${JSON.stringify(aiInput, null, 2)}`;\n\nreturn [{\n  json: {\n    ...$json,\n    ai_gate_input: aiInput,\n    ai_prompt: prompt,\n    ai_request_started_at_ms: Date.now()\n  }\n}];\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -1040,
+        80
+      ],
+      "id": "c18746b2-f6b4-44d0-9ff7-01e01a117523",
+      "name": "Build AI Gate Prompt"
+    },
+    {
+      "parameters": {
+        "jsCode": "const enabledText = String($env.AI_GATE_ENABLED ?? \"true\").trim().toLowerCase();\nconst enabled = [\"1\", \"true\", \"yes\", \"on\"].includes(enabledText);\nconst provider = String($env.AI_PROVIDER || \"ollama\").trim().toLowerCase();\nconst temperature = Number($env.AI_GATE_TEMPERATURE || $env.AI_TEMPERATURE || 0.2);\nconst maxTokens = Number($env.AI_GATE_MAX_TOKENS || 350);\nconst timeoutSeconds = Number($env.AI_GATE_TIMEOUT_SECONDS || 90);\nconst confidenceThreshold = Number($env.AI_GATE_CONFIDENCE_THRESHOLD || 0.75);\nconst fallbackMode = String($env.AI_GATE_FALLBACK_MODE || \"deterministic\").trim().toLowerCase();\n\nlet ai_url = \"\";\nlet ai_headers = { \"Content-Type\": \"application/json\" };\nlet ai_body = {};\nlet ai_model = \"\";\n\nif (provider === \"ollama\") {\n  const baseUrl = String($env.OLLAMA_BASE_URL || \"http://host.docker.internal:11434\").replace(/\\/$/, \"\");\n  ai_model = String($env.OLLAMA_MODEL || \"qwen2.5:3b\");\n  ai_url = `${baseUrl}/api/generate`;\n  ai_body = {\n    model: ai_model,\n    prompt: $json.ai_prompt,\n    stream: false,\n    format: \"json\",\n    keep_alive: String($env.AI_GATE_KEEP_ALIVE || \"10m\"),\n    options: {\n      temperature,\n      num_predict: maxTokens\n    }\n  };\n} else if (provider === \"openai\") {\n  const baseUrl = String($env.OPENAI_COMPATIBLE_BASE_URL || \"\").replace(/\\/$/, \"\");\n  const apiKey = String($env.OPENAI_COMPATIBLE_API_KEY || \"\");\n  ai_model = String($env.OPENAI_COMPATIBLE_MODEL || \"gpt-4.1-mini\");\n  ai_url = `${baseUrl}/chat/completions`;\n  ai_headers = {\n    \"Content-Type\": \"application/json\",\n    \"Authorization\": `Bearer ${apiKey}`\n  };\n  ai_body = {\n    model: ai_model,\n    messages: [\n      { role: \"system\", content: \"Return only a valid JSON object for the requested DevSecOps security-gate schema.\" },\n      { role: \"user\", content: $json.ai_prompt }\n    ],\n    temperature,\n    max_tokens: maxTokens,\n    response_format: { type: \"json_object\" }\n  };\n} else if (provider === \"anthropic\") {\n  const apiKey = String($env.ANTHROPIC_API_KEY || \"\");\n  ai_model = String($env.ANTHROPIC_MODEL || \"claude-3-5-sonnet-latest\");\n  ai_url = \"https://api.anthropic.com/v1/messages\";\n  ai_headers = {\n    \"Content-Type\": \"application/json\",\n    \"x-api-key\": apiKey,\n    \"anthropic-version\": \"2023-06-01\"\n  };\n  ai_body = {\n    model: ai_model,\n    max_tokens: maxTokens,\n    temperature,\n    messages: [{ role: \"user\", content: $json.ai_prompt }]\n  };\n} else {\n  throw new Error(`Unsupported AI_PROVIDER: ${provider}`);\n}\n\nreturn [{\n  json: {\n    ...$json,\n    ai_gate_enabled: enabled,\n    ai_provider: provider,\n    ai_model,\n    ai_url,\n    ai_headers,\n    ai_body,\n    ai_timeout_ms: Math.max(1000, Math.round(timeoutSeconds * 1000)),\n    ai_confidence_threshold: Math.max(0, Math.min(1, confidenceThreshold)),\n    ai_fallback_mode: [\"deterministic\", \"strict_block\"].includes(fallbackMode)\n      ? fallbackMode\n      : \"deterministic\"\n  }\n}];\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -820,
+        80
+      ],
+      "id": "a31d9ec7-9371-48a1-b854-2d635330e119",
+      "name": "Load AI Gate Config"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "fa8ae127-023b-45e3-aeb9-2ecee947e37e",
+              "leftValue": "={{ $json.ai_gate_enabled }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        -600,
+        80
+      ],
+      "id": "3492e348-e13b-4db8-aef9-6eb76c80236d",
+      "name": "AI Gate Enabled?"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $json.ai_url }}",
+        "sendHeaders": true,
+        "specifyHeaders": "json",
+        "jsonHeaders": "={{ JSON.stringify($json.ai_headers) }}",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ $json.ai_body }}",
+        "options": {
+          "timeout": "={{ $json.ai_timeout_ms }}"
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        -360,
+        -40
+      ],
+      "id": "09ae210c-e226-45bf-b829-ea257a1de73c",
+      "name": "AI Gate HTTP Request",
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "const previous = $(\"Load AI Gate Config\").first().json;\nconst provider = previous.ai_provider;\nconst elapsedMs = Math.max(0, Date.now() - Number(previous.ai_request_started_at_ms || Date.now()));\n\nlet raw = \"\";\nlet providerError = \"\";\n\nif ($json.error) {\n  providerError = typeof $json.error === \"string\"\n    ? $json.error\n    : ($json.error.message || JSON.stringify($json.error));\n}\n\nif (provider === \"ollama\") {\n  raw = $json.response || $json.body?.response || \"\";\n} else if (provider === \"openai\") {\n  raw = $json.choices?.[0]?.message?.content || $json.body?.choices?.[0]?.message?.content || \"\";\n} else if (provider === \"anthropic\") {\n  const content = $json.content || $json.body?.content || [];\n  raw = Array.isArray(content) ? content.map(item => item.text || \"\").join(\"\\n\") : String(content || \"\");\n}\n\nfunction extractJson(text) {\n  let cleaned = String(text || \"\").trim();\n  cleaned = cleaned.replace(/^```(?:json)?\\s*/i, \"\").replace(/\\s*```$/i, \"\").trim();\n  const start = cleaned.indexOf(\"{\");\n  const end = cleaned.lastIndexOf(\"}\");\n  if (start >= 0 && end > start) cleaned = cleaned.slice(start, end + 1);\n  return JSON.parse(cleaned);\n}\n\nconst validationErrors = [];\nlet assessment = null;\nlet status = \"invalid_response\";\n\nif (providerError) {\n  status = \"provider_error\";\n  validationErrors.push(providerError);\n} else if (!String(raw || \"\").trim()) {\n  validationErrors.push(\"AI provider returned an empty response\");\n} else {\n  try {\n    assessment = extractJson(raw);\n  } catch (error) {\n    validationErrors.push(`Invalid JSON: ${error.message}`);\n  }\n}\n\nconst severityValues = new Set([\"critical\", \"high\", \"medium\", \"low\", \"info\"]);\nconst decisionValues = new Set([\"ALLOW\", \"BLOCK\"]);\n\nif (assessment && typeof assessment === \"object\" && !Array.isArray(assessment)) {\n  const risk = Number(assessment.ai_risk_score);\n  const confidence = Number(assessment.ai_confidence);\n  const severity = String(assessment.ai_severity || \"\").toLowerCase();\n  const decision = String(assessment.ai_recommended_decision || \"\").toUpperCase();\n\n  if (!Number.isFinite(risk) || risk < 0 || risk > 10) validationErrors.push(\"ai_risk_score must be between 0 and 10\");\n  if (!severityValues.has(severity)) validationErrors.push(\"ai_severity is invalid\");\n  if (!Number.isFinite(confidence) || confidence < 0 || confidence > 1) validationErrors.push(\"ai_confidence must be between 0 and 1\");\n  if (!String(assessment.ai_summary || \"\").trim()) validationErrors.push(\"ai_summary is required\");\n  if (!Array.isArray(assessment.priority_findings)) validationErrors.push(\"priority_findings must be an array\");\n  if (!Array.isArray(assessment.ai_block_reasons)) validationErrors.push(\"ai_block_reasons must be an array\");\n  if (!String(assessment.remediation_summary || \"\").trim()) validationErrors.push(\"remediation_summary is required\");\n  if (!decisionValues.has(decision)) validationErrors.push(\"ai_recommended_decision must be ALLOW or BLOCK\");\n\n  if (validationErrors.length === 0) {\n    assessment = {\n      ai_risk_score: risk,\n      ai_severity: severity,\n      ai_confidence: confidence,\n      ai_summary: String(assessment.ai_summary).trim(),\n      priority_findings: assessment.priority_findings.slice(0, 10),\n      ai_block_reasons: assessment.ai_block_reasons.map(String).slice(0, 10),\n      remediation_summary: String(assessment.remediation_summary).trim(),\n      ai_recommended_decision: decision\n    };\n    status = \"valid\";\n  }\n}\n\nreturn [{\n  json: {\n    ...previous,\n    ai_status: status,\n    ai_schema_valid: status === \"valid\",\n    ai_validation_errors: validationErrors,\n    ai_raw_response: String(raw || \"\").slice(0, 6000),\n    ai_latency_ms: elapsedMs,\n    ai_assessment: status === \"valid\" ? assessment : null\n  }\n}];\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -120,
+        -40
+      ],
+      "id": "b8d460cb-c1e9-44e7-8071-d871195cffe7",
+      "name": "Parse and Validate AI Assessment"
+    },
+    {
+      "parameters": {
+        "jsCode": "return [{\n  json: {\n    ...$json,\n    ai_status: \"disabled\",\n    ai_schema_valid: false,\n    ai_validation_errors: [],\n    ai_raw_response: \"\",\n    ai_latency_ms: 0,\n    ai_assessment: null\n  }\n}];\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -360,
+        200
+      ],
+      "id": "45d6fb19-469c-478d-a786-8fb341b75a34",
+      "name": "AI Gate Disabled"
+    },
+    {
+      "parameters": {
+        "jsCode": "const deterministicBlock = $json.should_block_precheck === true;\nconst deterministicDecision = deterministicBlock ? \"BLOCK\" : \"ALLOW\";\nconst deterministicReasons = Array.isArray($json.deterministic_block_reasons)\n  ? [...$json.deterministic_block_reasons]\n  : [];\n\nconst aiValid = $json.ai_status === \"valid\" && $json.ai_assessment;\nconst ai = aiValid ? $json.ai_assessment : null;\nconst threshold = Number($json.ai_confidence_threshold ?? 0.75);\nconst aiHighConfidenceBlock = Boolean(\n  aiValid &&\n  ai.ai_recommended_decision === \"BLOCK\" &&\n  Number(ai.ai_confidence) >= threshold\n);\n\nlet finalBlock = false;\nlet decisionSource = \"deterministic_allow\";\nconst finalReasons = [...deterministicReasons];\n\nif (deterministicBlock) {\n  finalBlock = true;\n  decisionSource = \"deterministic_policy\";\n  if (aiValid && ai.ai_recommended_decision === \"ALLOW\") {\n    finalReasons.push(\"AI ALLOW recommendation ignored because mandatory deterministic policy blocked the build\");\n  }\n} else if (aiHighConfidenceBlock) {\n  finalBlock = true;\n  decisionSource = \"ai_escalation\";\n  for (const reason of ai.ai_block_reasons || []) {\n    if (reason && !finalReasons.includes(reason)) finalReasons.push(reason);\n  }\n} else if (\n  $json.ai_gate_enabled === true &&\n  !aiValid &&\n  $json.ai_fallback_mode === \"strict_block\"\n) {\n  finalBlock = true;\n  decisionSource = \"ai_fallback_strict_block\";\n  finalReasons.push(`AI gate unavailable or invalid (${String($json.ai_status || \"unknown\")})`);\n} else if ($json.ai_gate_enabled !== true) {\n  decisionSource = \"deterministic_fallback_ai_disabled\";\n} else if (!aiValid) {\n  decisionSource = \"deterministic_fallback_ai_unavailable\";\n} else if (ai.ai_recommended_decision === \"BLOCK\" && Number(ai.ai_confidence) < threshold) {\n  decisionSource = \"deterministic_allow_ai_low_confidence\";\n} else {\n  decisionSource = \"deterministic_allow_ai_confirmed\";\n}\n\nconst preScore = Number($json.pre_risk_score || 0);\nconst finalRiskScore = aiValid\n  ? Math.max(preScore, Number(ai.ai_risk_score || 0))\n  : preScore;\n\nreturn [{\n  json: {\n    ...$json,\n    deterministic_decision: deterministicDecision,\n    final_should_block: finalBlock,\n    should_block_pipeline: finalBlock,\n    pipeline_decision: finalBlock ? \"BLOCK\" : \"ALLOW\",\n    decision_source: decisionSource,\n    final_risk_score: Math.max(0, Math.min(10, finalRiskScore)),\n    final_gate_reasons: finalReasons\n  }\n}];\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        120,
+        80
+      ],
+      "id": "7d705eb8-06b7-4135-8af2-d5763cf59321",
+      "name": "Hybrid Gate Decision"
+    },
+    {
+      "parameters": {
+        "jsCode": "const findings = Array.isArray($json.findings) ? $json.findings : [];\nconst counts = $json.severity_counts || {};\nconst ai = $json.ai_assessment || {};\n\nconst severity =\n  (counts.critical || 0) > 0 ? \"critical\" :\n  (counts.high || 0) > 0 ? \"high\" :\n  (counts.medium || 0) > 0 ? \"medium\" :\n  (counts.low || 0) > 0 ? \"low\" :\n  \"info\";\n\nreturn [{\n  json: {\n    report_type: \"AI-Assisted DevSecOps Security Report\",\n    project_name: $json.metadata?.repo || \"unknown-project\",\n    repo: $json.metadata?.repo || \"\",\n    branch: $json.metadata?.branch || \"\",\n    commit: $json.metadata?.commit || \"\",\n\n    total_findings: $json.total_findings || findings.length,\n    risk_score: $json.final_risk_score || 0,\n    pre_risk_score: $json.pre_risk_score || 0,\n    severity,\n\n    analysis_type: \"guardrailed_hybrid_ai_security_gate\",\n    deterministic_decision: $json.deterministic_decision,\n    deterministic_block_reasons: $json.deterministic_block_reasons || [],\n    gate_reasons: $json.final_gate_reasons || [],\n    decision_source: $json.decision_source,\n\n    ai_gate_enabled: $json.ai_gate_enabled,\n    ai_status: $json.ai_status,\n    ai_schema_valid: $json.ai_schema_valid,\n    ai_validation_errors: $json.ai_validation_errors || [],\n    ai_provider: $json.ai_provider,\n    ai_model: $json.ai_model,\n    ai_latency_ms: $json.ai_latency_ms || 0,\n    ai_confidence_threshold: $json.ai_confidence_threshold,\n    ai_risk_score: ai.ai_risk_score ?? null,\n    ai_severity: ai.ai_severity || \"\",\n    ai_confidence: ai.ai_confidence ?? null,\n    ai_recommended_decision: ai.ai_recommended_decision || \"\",\n    ai_summary: ai.ai_summary || `AI gate status: ${$json.ai_status}`,\n    ai_fix_suggestion: ai.remediation_summary || \"\",\n    ai_priority_findings: ai.priority_findings || [],\n    ai_block_reasons: ai.ai_block_reasons || [],\n    ai_gate_input: $json.ai_gate_input || {},\n    ai_raw_response: $json.ai_raw_response || \"\",\n\n    should_block_pipeline: $json.should_block_pipeline === true,\n    pipeline_decision: $json.pipeline_decision,\n\n    severity_counts: counts,\n    tool_counts: $json.tool_counts || {},\n    ai_findings: [],\n    normal_findings: findings,\n    all_findings: findings\n  }\n}];\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        360,
+        80
+      ],
+      "id": "0d4a3f3c-0021-4e7c-b119-878dd56cf0c2",
+      "name": "Format Report for Dashboard"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.DASHBOARD_API_URL || 'http://dashboard:8000/api/scans' }}",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ $json }}",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        600,
+        80
+      ],
+      "id": "812ae9da-c637-4e27-9b6b-cadc0311fd2f",
+      "name": "Save to Database"
+    },
+    {
+      "parameters": {
+        "jsCode": "const gate = $(\"Format Report for Dashboard\").first().json;\nconst dbResponse = $json || {};\n\nreturn [{\n  json: {\n    pipeline_decision: gate.pipeline_decision,\n    should_block_pipeline: gate.should_block_pipeline,\n    risk_score: gate.risk_score,\n    pre_risk_score: gate.pre_risk_score,\n    severity: gate.severity,\n    severity_counts: gate.severity_counts,\n    total_findings: gate.total_findings,\n\n    deterministic_decision: gate.deterministic_decision,\n    ai_status: gate.ai_status,\n    ai_schema_valid: gate.ai_schema_valid,\n    ai_provider: gate.ai_provider,\n    ai_model: gate.ai_model,\n    ai_risk_score: gate.ai_risk_score,\n    ai_severity: gate.ai_severity,\n    ai_confidence: gate.ai_confidence,\n    ai_recommended_decision: gate.ai_recommended_decision,\n    ai_latency_ms: gate.ai_latency_ms,\n    decision_source: gate.decision_source,\n    gate_reasons: gate.gate_reasons,\n\n    message: gate.pipeline_decision === \"BLOCK\"\n      ? \"Hybrid AI security gate blocked the pipeline. CD deployment stopped.\"\n      : \"Hybrid AI security gate passed. CD deployment allowed.\",\n    dashboard_saved: true,\n    scan_id: dbResponse.id || dbResponse.scan_id || null\n  }\n}];\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        840,
+        80
+      ],
+      "id": "9cafe5d5-0df8-4bc1-b562-14d6a5b289b1",
+      "name": "Prepare Webhook Response"
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ $json }}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.5,
+      "position": [
+        1080,
+        80
+      ],
+      "id": "b4f34cb9-bf47-4a26-be42-fcc794df04cd",
+      "name": "Respond to Webhook"
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Normalize Findings",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalize Findings": {
+      "main": [
+        [
+          {
+            "node": "Deterministic Risk Pre-Scoring",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Deterministic Risk Pre-Scoring": {
+      "main": [
+        [
+          {
+            "node": "Build AI Gate Prompt",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build AI Gate Prompt": {
+      "main": [
+        [
+          {
+            "node": "Load AI Gate Config",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Load AI Gate Config": {
+      "main": [
+        [
+          {
+            "node": "AI Gate Enabled?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "AI Gate Enabled?": {
+      "main": [
+        [
+          {
+            "node": "AI Gate HTTP Request",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "AI Gate Disabled",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "AI Gate HTTP Request": {
+      "main": [
+        [
+          {
+            "node": "Parse and Validate AI Assessment",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse and Validate AI Assessment": {
+      "main": [
+        [
+          {
+            "node": "Hybrid Gate Decision",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "AI Gate Disabled": {
+      "main": [
+        [
+          {
+            "node": "Hybrid Gate Decision",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Hybrid Gate Decision": {
+      "main": [
+        [
+          {
+            "node": "Format Report for Dashboard",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Report for Dashboard": {
+      "main": [
+        [
+          {
+            "node": "Save to Database",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Save to Database": {
+      "main": [
+        [
+          {
+            "node": "Prepare Webhook Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Webhook Response": {
+      "main": [
+        [
+          {
+            "node": "Respond to Webhook",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "callerPolicy": "workflowsFromSameOwner",
+    "availableInMCP": false,
+    "executionTimeout": 170
+  },
+  "tags": []
+}
